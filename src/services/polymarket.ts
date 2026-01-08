@@ -4,7 +4,7 @@ import { fetchWithProxy } from '@/utils';
 interface PolymarketMarket {
   question: string;
   outcomes?: string[];
-  outcomePrices?: string[];
+  outcomePrices?: string; // Stringified JSON array like "[\"0.02\", \"0.98\"]"
   volume?: string;
   volumeNum?: number;
   closed?: boolean;
@@ -21,19 +21,23 @@ export async function fetchPredictions(): Promise<PredictionMarket[]> {
 
     return data
       .map((market) => {
-        // Parse outcomePrices - it's an array of string prices
-        const prices = market.outcomePrices;
+        // outcomePrices is a STRINGIFIED JSON array like "[\"0.02\", \"0.98\"]"
         let yesPrice = 50; // default
 
-        if (prices && prices.length >= 2) {
-          // First price is typically "Yes" outcome
-          const priceStr = prices[0];
-          if (priceStr) {
-            const parsed = parseFloat(priceStr);
-            if (!isNaN(parsed)) {
-              yesPrice = parsed * 100;
+        try {
+          const pricesStr = market.outcomePrices;
+          if (pricesStr) {
+            // Parse the stringified JSON array
+            const prices: string[] = JSON.parse(pricesStr);
+            if (Array.isArray(prices) && prices.length >= 1 && prices[0]) {
+              const parsed = parseFloat(prices[0]);
+              if (!isNaN(parsed)) {
+                yesPrice = parsed * 100;
+              }
             }
           }
+        } catch {
+          // Keep default 50 if parsing fails
         }
 
         const volume = market.volumeNum ?? (market.volume ? parseFloat(market.volume) : 0);
