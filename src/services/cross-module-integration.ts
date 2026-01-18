@@ -85,14 +85,6 @@ function haversineDistance(
   return R * c;
 }
 
-function getPriorityFromScore(score: number): AlertPriority {
-  // Match CII thresholds: critical at 81+, high at 66+
-  if (score >= 81) return 'critical';
-  if (score >= 66) return 'high';
-  if (score >= 51) return 'medium';
-  return 'low';
-}
-
 function getPriorityFromCIIChange(change: number, level: CountryScore['level']): AlertPriority {
   const absChange = Math.abs(change);
   // Match CII thresholds: critical at 81+, high at 66+
@@ -109,19 +101,31 @@ function getPriorityFromCascadeImpact(impact: CascadeImpactLevel, count: number)
   return 'low';
 }
 
-export function createConvergenceAlert(convergence: GeoConvergenceAlert): UnifiedAlert {
-  const alert: UnifiedAlert = {
-    id: generateAlertId(),
+function getPriorityFromConvergence(score: number, typeCount: number): AlertPriority {
+  // Convergence: 4+ event types or score 90+ = critical, 3 types or 70+ = high
+  if (typeCount >= 4 || score >= 90) return 'critical';
+  if (typeCount >= 3 || score >= 70) return 'high';
+  if (score >= 50) return 'medium';
+  return 'low';
+}
+
+function buildConvergenceAlert(convergence: GeoConvergenceAlert, alertId: string): UnifiedAlert {
+  return {
+    id: alertId,
     type: 'convergence',
-    priority: getPriorityFromScore(convergence.score),
-    title: `Geographic Convergence: ${convergence.types.length} signal types`,
+    priority: getPriorityFromConvergence(convergence.score, convergence.types.length),
+    title: `Geographic Alert: ${getCountriesNearLocation(convergence.lat, convergence.lon).join(', ') || 'Unknown'}`,
     summary: `${convergence.totalEvents} events detected in region (${convergence.lat.toFixed(1)}°, ${convergence.lon.toFixed(1)}°)`,
     components: { convergence },
     location: { lat: convergence.lat, lon: convergence.lon },
     countries: getCountriesNearLocation(convergence.lat, convergence.lon),
     timestamp: new Date(),
   };
+}
 
+export function createConvergenceAlert(convergence: GeoConvergenceAlert): UnifiedAlert {
+  const alertId = `conv-${convergence.cellId}`;
+  const alert = buildConvergenceAlert(convergence, alertId);
   return addAndMergeAlert(alert);
 }
 
@@ -384,16 +388,9 @@ function updateAlerts(convergenceAlerts: GeoConvergenceAlert[]): void {
     alerts.shift();
   }
 
-  // Add convergence alerts (avoid duplicates by checking existing IDs)
-  const existingIds = new Set(alerts.map(a => a.id));
+  // Add convergence alerts (addAndMergeAlert handles deduplication by stable ID)
   for (const conv of convergenceAlerts) {
-    const alertId = `conv-${conv.cellId}`;
-    if (!existingIds.has(alertId)) {
-      const alert = createConvergenceAlert(conv);
-      alert.id = alertId; // Use stable ID for deduplication
-      alerts.push(alert);
-      existingIds.add(alertId);
-    }
+    createConvergenceAlert(conv);
   }
 
   // Check for CII changes (alerts are added internally via addAndMergeAlert)
