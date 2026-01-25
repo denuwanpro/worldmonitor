@@ -397,7 +397,6 @@ export interface MapLayers {
   sanctions: boolean;
   weather: boolean;
   economic: boolean;
-  countries: boolean;
   waterways: boolean;
   outages: boolean;
   datacenters: boolean;
@@ -969,4 +968,54 @@ export interface StartupEcosystem {
   avgSeedRound?: number;
   avgSeriesA?: number;
   description?: string;
+}
+
+// ============================================================================
+// FOCAL POINT DETECTION (Intelligence Synthesis)
+// ============================================================================
+
+export type FocalPointUrgency = 'watch' | 'elevated' | 'critical';
+
+export interface EntityMention {
+  entityId: string;
+  entityType: 'country' | 'company' | 'index' | 'commodity' | 'crypto' | 'sector';
+  displayName: string;
+  mentionCount: number;
+  avgConfidence: number;
+  clusterIds: string[];
+  topHeadlines: string[];
+}
+
+export interface FocalPoint {
+  id: string;
+  entityId: string;
+  entityType: 'country' | 'company' | 'index' | 'commodity' | 'crypto' | 'sector';
+  displayName: string;
+
+  // News dimension
+  newsMentions: number;
+  newsVelocity: number;
+  topHeadlines: string[];
+
+  // Signal dimension
+  signalTypes: string[];
+  signalCount: number;
+  highSeverityCount: number;
+  signalDescriptions: string[];
+
+  // Scoring
+  focalScore: number;
+  urgency: FocalPointUrgency;
+
+  // For AI context
+  narrative: string;
+  correlationEvidence: string[];
+}
+
+export interface FocalPointSummary {
+  timestamp: Date;
+  focalPoints: FocalPoint[];
+  aiContext: string;
+  topCountries: FocalPoint[];
+  topCompanies: FocalPoint[];
 }

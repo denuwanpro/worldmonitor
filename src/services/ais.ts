@@ -1,4 +1,5 @@
 import type { AisDisruptionEvent, AisDensityZone } from '@/types';
+import { dataFreshness } from './data-freshness';
 
 // WebSocket relay for live vessel tracking
 // Dev: local relay (node scripts/ais-relay.cjs)
@@ -169,6 +170,8 @@ function handleMessage(event: MessageEvent): void {
       processPositionReport(data);
       if (messageCount % 100 === 0) {
         console.log(`[Shipping] Received ${messageCount} position reports, tracking ${vessels.size} vessels`);
+        // Update data freshness every 100 messages
+        dataFreshness.recordUpdate('ais', vessels.size);
       }
     }
   } catch (e) {

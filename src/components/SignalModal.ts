@@ -226,10 +226,17 @@ export class SignalModal {
       'geo_convergence': '🌐 Geographic Convergence',
       'explained_market_move': '✓ Market Move Explained',
       'sector_cascade': '📊 Sector Cascade',
+      'military_surge': '🛩️ Military Surge',
     };
 
     const html = this.currentSignals.map(signal => {
       const context = getSignalContext(signal.type as SignalType);
+      // Military surge signals have additional properties in data
+      const data = signal.data as Record<string, unknown>;
+      const newsCorrelation = data?.newsCorrelation as string | null;
+      const focalPoints = data?.focalPointContext as string[] | null;
+      const locationData = { lat: data?.lat as number | undefined, lon: data?.lon as number | undefined, regionName: data?.regionName as string | undefined };
+
       return `
         <div class="signal-item ${escapeHtml(signal.type)}">
           <div class="signal-type">${signalTypeLabels[signal.type] || escapeHtml(signal.type)}</div>
@@ -241,6 +248,25 @@ export class SignalModal {
           </div>
           ${signal.data.explanation ? `
             <div class="signal-explanation">${escapeHtml(signal.data.explanation)}</div>
+          ` : ''}
+          ${focalPoints && focalPoints.length > 0 ? `
+            <div class="signal-focal-points">
+              <div class="focal-points-header">📡 CORRELATED FOCAL POINTS</div>
+              ${focalPoints.map(fp => `<div class="focal-point-item">${escapeHtml(fp)}</div>`).join('')}
+            </div>
+          ` : ''}
+          ${newsCorrelation ? `
+            <div class="signal-news-correlation">
+              <div class="news-correlation-header">📰 NEWS CORRELATION</div>
+              <pre class="news-correlation-text">${escapeHtml(newsCorrelation)}</pre>
+            </div>
+          ` : ''}
+          ${locationData.lat && locationData.lon ? `
+            <div class="signal-location">
+              <button class="location-link" data-lat="${locationData.lat}" data-lon="${locationData.lon}">
+                📍 View on map: ${locationData.regionName || `${locationData.lat.toFixed(2)}°, ${locationData.lon.toFixed(2)}°`}
+              </button>
+            </div>
           ` : ''}
           <div class="signal-context">
             <div class="signal-context-item why-matters">

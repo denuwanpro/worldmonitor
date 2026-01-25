@@ -5,15 +5,17 @@ const SITE_VARIANT = import.meta.env.VITE_VARIANT || 'full';
 // ============================================
 // FULL VARIANT (Geopolitical)
 // ============================================
+// Panel order matters! First panels appear at top of grid.
+// Desired order: live-news (video), insights (AI), cii, strategic-risk, then rest
 const FULL_PANELS: Record<string, PanelConfig> = {
   map: { name: 'Global Map', enabled: true, priority: 1 },
   'live-news': { name: 'Live News', enabled: true, priority: 1 },
-  'geo-hubs': { name: 'Geopolitical Hotspots', enabled: true, priority: 1 },
+  insights: { name: 'AI Insights', enabled: true, priority: 1 },
+  cii: { name: 'Country Instability', enabled: true, priority: 1 },
+  'strategic-risk': { name: 'Strategic Risk Overview', enabled: true, priority: 1 },
   intel: { name: 'Intel Feed', enabled: true, priority: 1 },
   'gdelt-intel': { name: 'Live Intelligence', enabled: true, priority: 1 },
-  cii: { name: 'Country Instability', enabled: true, priority: 1 },
   cascade: { name: 'Infrastructure Cascade', enabled: true, priority: 1 },
-  'strategic-risk': { name: 'Strategic Risk Overview', enabled: true, priority: 1 },
   politics: { name: 'World News', enabled: true, priority: 1 },
   middleeast: { name: 'Middle East', enabled: true, priority: 1 },
   africa: { name: 'Africa', enabled: true, priority: 1 },
@@ -47,7 +49,6 @@ const FULL_MAP_LAYERS: MapLayers = {
   sanctions: true,
   weather: true,
   economic: true,
-  countries: false,
   waterways: true,
   outages: true,
   datacenters: false,
@@ -77,7 +78,6 @@ const FULL_MOBILE_MAP_LAYERS: MapLayers = {
   sanctions: true,
   weather: true,
   economic: false,
-  countries: false,
   waterways: false,
   outages: true,
   datacenters: false,
@@ -101,7 +101,6 @@ const FULL_MOBILE_MAP_LAYERS: MapLayers = {
 const TECH_PANELS: Record<string, PanelConfig> = {
   map: { name: 'Global Tech Map', enabled: true, priority: 1 },
   'live-news': { name: 'Tech Headlines', enabled: true, priority: 1 },
-  'tech-hubs': { name: 'Hot Tech Hubs', enabled: true, priority: 1 },
   ai: { name: 'AI/ML News', enabled: true, priority: 1 },
   tech: { name: 'Technology', enabled: true, priority: 1 },
   startups: { name: 'Startups & VC', enabled: true, priority: 1 },
@@ -109,9 +108,6 @@ const TECH_PANELS: Record<string, PanelConfig> = {
   regionalStartups: { name: 'Global Startup News', enabled: true, priority: 1 },
   unicorns: { name: 'Unicorn Tracker', enabled: true, priority: 1 },
   accelerators: { name: 'Accelerators & Demo Days', enabled: true, priority: 1 },
-  thinktanks: { name: 'Think Tanks & Research', enabled: true, priority: 1 },
-  podcasts: { name: 'Tech Podcasts & Newsletters', enabled: true, priority: 1 },
-  'tech-readiness': { name: 'Tech Readiness Index', enabled: true, priority: 1 },
   security: { name: 'Cybersecurity', enabled: true, priority: 1 },
   policy: { name: 'AI Policy & Regulation', enabled: true, priority: 1 },
   regulation: { name: 'AI Regulation Dashboard', enabled: true, priority: 1 },
@@ -130,6 +126,7 @@ const TECH_PANELS: Record<string, PanelConfig> = {
   events: { name: 'Tech Events', enabled: true, priority: 1 },
   'service-status': { name: 'Service Status', enabled: true, priority: 2 },
   economic: { name: 'Economic Indicators', enabled: true, priority: 2 },
+  insights: { name: 'AI Insights', enabled: true, priority: 2 },
   monitors: { name: 'My Monitors', enabled: true, priority: 2 },
 };
 
@@ -145,7 +142,6 @@ const TECH_MAP_LAYERS: MapLayers = {
   sanctions: false,
   weather: true,
   economic: true,
-  countries: false,
   waterways: false,
   outages: true,
   datacenters: true,
@@ -175,7 +171,6 @@ const TECH_MOBILE_MAP_LAYERS: MapLayers = {
   sanctions: false,
   weather: false,
   economic: false,
-  countries: false,
   waterways: false,
   outages: true,
   datacenters: true,

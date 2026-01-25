@@ -427,6 +427,46 @@ The entity registry spans strategically significant sectors:
 
 This broad coverage enables correlation detection across diverse geopolitical and market events.
 
+### Entity Registry Architecture
+
+The entity registry is a knowledge base of 600+ entities with rich metadata for intelligent correlation:
+
+```typescript
+{
+  id: 'NVDA',           // Unique identifier
+  name: 'Nvidia',       // Display name
+  type: 'company',      // company | country | index | commodity | currency
+  sector: 'semiconductors',
+  searchTerms: ['Nvidia', 'NVDA', 'Jensen Huang', 'H100', 'CUDA'],
+  aliases: ['nvidia', 'nvda'],
+  competitors: ['AMD', 'INTC'],
+  related: ['AVGO', 'TSM', 'ASML'],  // Related entities
+  country: 'US',        // Headquarters/origin
+}
+```
+
+**Entity Types**:
+
+| Type | Count | Use Case |
+|------|-------|----------|
+| `company` | 100+ | Market-news correlation, sector analysis |
+| `country` | 200+ | Focal point detection, CII scoring |
+| `index` | 20+ | Market overview, regional tracking |
+| `commodity` | 15+ | Energy and mineral correlation |
+| `currency` | 10+ | FX market tracking |
+
+**Lookup Indexes**:
+
+The registry provides multiple lookup paths for fast entity resolution:
+
+| Index | Query Example | Use Case |
+|-------|---------------|----------|
+| `byId` | `'NVDA'` → Nvidia entity | Direct lookup from ticker |
+| `byAlias` | `'nvidia'` → Nvidia entity | Case-insensitive name match |
+| `byKeyword` | `'AI chips'` → [Nvidia, AMD, Intel] | News keyword extraction |
+| `bySector` | `'semiconductors'` → all chip companies | Sector cascade analysis |
+| `byCountry` | `'US'` → all US entities | Country-level aggregation |
+
 ### Signal Deduplication
 
 To prevent alert fatigue, signals use **type-specific TTL (time-to-live)** values for deduplication:
@@ -2345,6 +2385,114 @@ Early detection of flow drops—especially when markets haven't reacted—provid
 
 ---
 
+## Signal Aggregator
+
+The Signal Aggregator is the central nervous system that collects, groups, and summarizes intelligence signals from all data sources.
+
+### What It Aggregates
+
+| Signal Type | Source | Frequency |
+|-------------|--------|-----------|
+| `military_flight` | OpenSky ADS-B | Real-time |
+| `military_vessel` | AIS WebSocket | Real-time |
+| `protest` | ACLED + GDELT | Hourly |
+| `internet_outage` | Cloudflare Radar | 5 min |
+| `ais_disruption` | AIS analysis | Real-time |
+
+### Country-Level Grouping
+
+All signals are grouped by country code, creating a unified view:
+
+```typescript
+{
+  country: 'UA',  // Ukraine
+  countryName: 'Ukraine',
+  totalCount: 15,
+  highSeverityCount: 3,
+  signalTypes: Set(['military_flight', 'protest', 'internet_outage']),
+  signals: [/* all signals for this country */]
+}
+```
+
+### Regional Convergence Detection
+
+The aggregator identifies geographic convergence—when multiple signal types cluster in the same region:
+
+| Convergence Level | Criteria | Alert Priority |
+|-------------------|----------|----------------|
+| **Critical** | 4+ signal types within 200km | Immediate |
+| **High** | 3 signal types within 200km | High |
+| **Medium** | 2 signal types within 200km | Normal |
+
+### Summary Output
+
+The aggregator provides a real-time summary for dashboards and AI context:
+
+```
+[SIGNAL SUMMARY]
+Top Countries: Ukraine (15 signals), Iran (12), Taiwan (8)
+Convergence Zones: Baltic Sea (military_flight + military_vessel),
+                   Tehran (protest + internet_outage)
+Active Signal Types: 5 of 5
+Total Signals: 47
+```
+
+---
+
+## Browser-Based Machine Learning
+
+For offline resilience and reduced API costs, the system includes browser-based ML capabilities using ONNX Runtime Web.
+
+### Available Models
+
+| Model | Task | Size | Use Case |
+|-------|------|------|----------|
+| **T5-small** | Text summarization | ~60MB | Offline briefing generation |
+| **DistilBERT** | Sentiment analysis | ~67MB | News tone classification |
+
+### Fallback Strategy
+
+Browser ML serves as the final fallback when cloud APIs are unavailable:
+
+```
+User requests summary
+    ↓
+1. Try Groq API (fast, free tier)
+    ↓ (rate limited or error)
+2. Try OpenRouter API (fallback provider)
+    ↓ (unavailable)
+3. Use Browser T5 (offline, always available)
+```
+
+### Lazy Loading
+
+Models are loaded on-demand to minimize initial page load:
+- Models download only when first needed
+- Progress indicator shows download status
+- Once cached, models load instantly from IndexedDB
+
+### Worker Isolation
+
+All ML inference runs in a dedicated Web Worker:
+- Main thread remains responsive during inference
+- 30-second timeout prevents hanging
+- Automatic cleanup on errors
+
+### Limitations
+
+Browser ML has constraints compared to cloud models:
+
+| Aspect | Cloud (Llama 3.3) | Browser (T5) |
+|--------|-------------------|--------------|
+| Context window | 128K tokens | 512 tokens |
+| Output quality | High | Moderate |
+| Inference speed | 2-3 seconds | 5-10 seconds |
+| Offline support | No | Yes |
+
+Browser summarization is intentionally limited to 6 headlines × 80 characters to stay within model constraints.
+
+---
+
 ## Cross-Module Integration
 
 Intelligence modules don't operate in isolation. Data flows between systems to enable composite analysis.
@@ -2388,6 +2536,325 @@ When a threshold is crossed:
 4. **UI updates** header badge and panel indicators
 
 This ensures a single escalation (e.g., Ukraine military flights + protests + news spike) surfaces as one coherent signal rather than three separate alerts.
+
+---
+
+## AI Insights Panel
+
+The Insights Panel provides AI-powered analysis of the current news landscape, transforming raw headlines into actionable intelligence briefings.
+
+### World Brief Generation
+
+Every 2 minutes (with rate limiting), the system generates a concise situation brief using a multi-provider fallback chain:
+
+| Priority | Provider | Model | Latency | Use Case |
+|----------|----------|-------|---------|----------|
+| 1 | Groq | Llama 3.3 70B | ~2s | Primary provider (fast inference) |
+| 2 | OpenRouter | Llama 3.3 70B | ~3s | Fallback when Groq rate-limited |
+| 3 | Browser | T5 (ONNX) | ~5s | Offline fallback (local ML) |
+
+**Caching Strategy**: Redis server-side caching prevents redundant API calls. When the same headline set has been summarized recently, the cached result is returned immediately.
+
+### Focal Point Detection
+
+The AI receives enriched context about **focal points**—entities that appear in both news coverage AND map signals. This enables intelligence-grade analysis:
+
+```
+[INTELLIGENCE SYNTHESIS]
+FOCAL POINTS (entities across news + signals):
+- IRAN [CRITICAL]: 12 news mentions + 5 map signals (military_flight, protest, internet_outage)
+  KEY: "Iran protests continue..." | SIGNALS: military activity, outage detected
+- TAIWAN [ELEVATED]: 8 news mentions + 3 map signals (military_vessel, military_flight)
+  KEY: "Taiwan tensions rise..." | SIGNALS: naval vessels detected
+```
+
+### Headline Scoring Algorithm
+
+Not all news is equally important. Headlines are scored to identify the most significant stories for the briefing:
+
+**Score Boosters** (high weight):
+- Military keywords: war, invasion, airstrike, missile, deployment, mobilization
+- Violence indicators: killed, casualties, clashes, massacre, crackdown
+- Civil unrest: protest, uprising, coup, riot, martial law
+
+**Geopolitical Multipliers**:
+- Flashpoint regions: Iran, Russia, China, Taiwan, Ukraine, North Korea, Gaza
+- Critical actors: NATO, Pentagon, Kremlin, Hezbollah, Hamas, Wagner
+
+**Score Reducers** (demoted):
+- Business context: CEO, earnings, stock, revenue, startup, data center
+- Entertainment: celebrity, movie, streaming
+
+This ensures military conflicts and humanitarian crises surface above routine business news.
+
+### Sentiment Analysis
+
+Headlines are analyzed for overall sentiment distribution:
+
+| Sentiment | Detection Method | Display |
+|-----------|------------------|---------|
+| **Negative** | Crisis, conflict, death keywords | Red percentage |
+| **Positive** | Agreement, growth, peace keywords | Green percentage |
+| **Neutral** | Neither detected | Gray percentage |
+
+The overall sentiment balance provides a quick read on whether the news cycle is trending toward escalation or de-escalation.
+
+### Velocity Detection
+
+Fast-moving stories are flagged when the same topic appears in multiple recent headlines:
+
+- Headlines are grouped by shared keywords and entities
+- Topics with 3+ mentions in 6 hours are marked as "high velocity"
+- Displayed separately to highlight developing situations
+
+---
+
+## Focal Point Detector
+
+The Focal Point Detector is the intelligence synthesis layer that correlates news entities with map signals to identify "main characters" driving current events.
+
+### The Problem It Solves
+
+Without synthesis, intelligence streams operate in silos:
+- News feeds show 80+ sources with thousands of headlines
+- Map layers display military flights, protests, outages independently
+- No automated way to see that IRAN appears in news AND has military activity AND an internet outage
+
+### How It Works
+
+1. **Entity Extraction**: Extract countries, companies, and organizations from all news clusters using the entity registry (600+ entities with aliases)
+
+2. **Signal Aggregation**: Collect all map signals (military flights, protests, outages, vessels) and group by country
+
+3. **Cross-Reference**: Match news entities with signal countries
+
+4. **Score & Rank**: Calculate focal scores based on correlation strength
+
+### Focal Point Scoring
+
+```
+FocalScore = NewsScore + SignalScore + CorrelationBonus
+
+NewsScore (0-40):
+  base = min(20, mentionCount × 4)
+  velocity = min(10, newsVelocity × 2)
+  confidence = avgConfidence × 10
+
+SignalScore (0-40):
+  types = signalTypes.count × 10
+  count = min(15, signalCount × 3)
+  severity = highSeverityCount × 5
+
+CorrelationBonus (0-20):
+  +10 if entity appears in BOTH news AND signals
+  +5 if news keywords match signal types (e.g., "military" + military_flight)
+  +5 if related entities also have signals
+```
+
+### Urgency Classification
+
+| Urgency | Criteria | Visual |
+|---------|----------|--------|
+| **Critical** | Score > 70 OR 3+ signal types | Red badge |
+| **Elevated** | Score > 50 OR 2+ signal types | Orange badge |
+| **Watch** | Default | Yellow badge |
+
+### Signal Type Icons
+
+Focal points display icons indicating which signal types are active:
+
+| Icon | Signal Type | Meaning |
+|------|-------------|---------|
+| ✈️ | military_flight | Military aircraft detected nearby |
+| ⚓ | military_vessel | Naval vessels in waters |
+| 📢 | protest | Civil unrest events |
+| 🌐 | internet_outage | Network disruption |
+| 🚢 | ais_disruption | Shipping anomaly |
+
+### Example Output
+
+A focal point for IRAN might show:
+- **Display**: "Iran [CRITICAL] ✈️📢🌐"
+- **News**: 12 mentions, velocity 0.5/hour
+- **Signals**: 5 military flights, 3 protests, 1 outage
+- **Narrative**: "12 news mentions | 5 military flights, 3 protests, 1 internet outage | 'Iran protests continue amid...'"
+- **Correlation Evidence**: "Iran appears in both news (12) and map signals (9)"
+
+### Integration with CII
+
+Focal point urgency levels feed into the Country Instability Index:
+- **Critical** focal point → CII score boost for that country
+- Ensures countries with multi-source convergence are properly flagged
+- Prevents "silent" instability when news alone wouldn't trigger alerts
+
+---
+
+## Natural Disaster Tracking
+
+The Natural layer combines two authoritative sources for comprehensive disaster monitoring.
+
+### GDACS (Global Disaster Alert and Coordination System)
+
+UN-backed disaster alert system providing official severity assessments:
+
+| Event Type | Code | Icon | Sources |
+|------------|------|------|---------|
+| Earthquake | EQ | 🔴 | USGS, EMSC |
+| Flood | FL | 🌊 | Satellite imagery |
+| Tropical Cyclone | TC | 🌀 | NOAA, JMA |
+| Volcano | VO | 🌋 | Smithsonian GVP |
+| Wildfire | WF | 🔥 | MODIS, VIIRS |
+| Drought | DR | ☀️ | Multiple sources |
+
+**Alert Levels**:
+| Level | Color | Meaning |
+|-------|-------|---------|
+| **Red** | Critical | Significant humanitarian impact expected |
+| **Orange** | Alert | Moderate impact, monitoring required |
+| **Green** | Advisory | Minor event, localized impact |
+
+### NASA EONET (Earth Observatory Natural Event Tracker)
+
+Near-real-time natural event detection from satellite observation:
+
+| Category | Detection Method | Typical Delay |
+|----------|------------------|---------------|
+| Severe Storms | GOES/Himawari imagery | Minutes |
+| Wildfires | MODIS thermal anomalies | 4-6 hours |
+| Volcanoes | Thermal + SO2 emissions | Hours |
+| Floods | SAR imagery + gauges | Hours to days |
+| Sea/Lake Ice | Passive microwave | Daily |
+| Dust/Haze | Aerosol optical depth | Hours |
+
+### Multi-Source Deduplication
+
+When both GDACS and EONET report the same event:
+1. Events within 100km and 48 hours are considered duplicates
+2. GDACS severity takes precedence (human-verified)
+3. EONET geometry provides more precise coordinates
+4. Combined entry shows both source attributions
+
+### Filtering Logic
+
+To prevent map clutter, natural events are filtered:
+- **Wildfires**: Only events < 48 hours old (older fires are either contained or well-known)
+- **Earthquakes**: M4.5+ globally, lower threshold for populated areas
+- **Storms**: Only named storms or those with warnings
+
+---
+
+## Military Surge Detection
+
+The system detects unusual concentrations of military activity using two complementary algorithms.
+
+### Baseline-Based Surge Detection
+
+Surges are detected by comparing current aircraft counts to historical baselines within defined military theaters:
+
+| Parameter | Value | Purpose |
+|-----------|-------|---------|
+| Surge threshold | 2.0× baseline | Minimum multiplier to trigger alert |
+| Baseline window | 48 hours | Historical data used for comparison |
+| Minimum samples | 6 observations | Required data points for valid baseline |
+
+**Aircraft Categories Tracked**:
+
+| Category | Examples | Minimum Count |
+|----------|----------|---------------|
+| Transport/Airlift | C-17, C-130, KC-135, REACH flights | 5 aircraft |
+| Fighter | F-15, F-16, F-22, Typhoon | 4 aircraft |
+| Reconnaissance | RC-135, E-3 AWACS, U-2 | 3 aircraft |
+
+### Surge Severity
+
+| Severity | Criteria | Meaning |
+|----------|----------|---------|
+| **Critical** | 4× baseline or higher | Major deployment |
+| **High** | 3× baseline | Significant increase |
+| **Medium** | 2× baseline | Elevated activity |
+
+### Military Theaters
+
+Surge detection groups activity into strategic theaters:
+
+| Theater | Center | Key Bases |
+|---------|--------|-----------|
+| Middle East | Persian Gulf | Al Udeid, Al Dhafra, Incirlik |
+| Eastern Europe | Poland | Ramstein, Spangdahlem, Łask |
+| Pacific | Guam/Japan | Andersen, Kadena, Yokota |
+| Horn of Africa | Djibouti | Camp Lemonnier |
+
+### Foreign Presence Detection
+
+A separate system monitors for military operators outside their normal operating areas:
+
+| Operator | Home Regions | Alert When Found In |
+|----------|--------------|---------------------|
+| USAF/USN | Alaska ADIZ | Persian Gulf, Taiwan Strait |
+| Russian VKS | Kaliningrad, Arctic, Black Sea | Baltic Region, Alaska ADIZ |
+| PLAAF/PLAN | Taiwan Strait, South China Sea | (alerts when increased) |
+| Israeli IAF | Eastern Med | Iran border region |
+
+**Example alert**:
+```
+FOREIGN MILITARY PRESENCE: Persian Gulf
+USAF: 3 aircraft detected (KC-135, RC-135W, E-3)
+Severity: HIGH - Operator outside normal home regions
+```
+
+### News Correlation
+
+Both surge and foreign presence alerts query the Focal Point Detector for context:
+
+1. Identify countries involved (aircraft operators, region countries)
+2. Check focal points for those countries
+3. If news correlation exists, attach headlines and evidence
+
+**Example with correlation**:
+```
+MILITARY AIRLIFT SURGE: Middle East Theater
+Current: 8 transport aircraft (2.5× baseline)
+Aircraft: C-17 (3), KC-135 (3), C-130J (2)
+
+NEWS CORRELATION:
+Iran: "Iran protests continue amid military..."
+→ Iran appears in both news (12) and map signals (9)
+```
+
+---
+
+## Service Status Monitoring
+
+The Service Status panel tracks the operational health of external services that WorldMonitor users may depend on.
+
+### Monitored Services
+
+| Service | Status Endpoint | Parser |
+|---------|-----------------|--------|
+| Anthropic (Claude) | status.claude.com | Statuspage.io |
+| OpenAI | status.openai.com | Statuspage.io |
+| Vercel | vercel-status.com | Statuspage.io |
+| Cloudflare | cloudflarestatus.com | Statuspage.io |
+| AWS | health.aws.amazon.com | Custom |
+| GitHub | githubstatus.com | Statuspage.io |
+
+### Status Levels
+
+| Status | Color | Meaning |
+|--------|-------|---------|
+| **Operational** | Green | All systems functioning normally |
+| **Degraded** | Yellow | Partial outage or performance issues |
+| **Partial Outage** | Orange | Some components unavailable |
+| **Major Outage** | Red | Significant service disruption |
+
+### Why This Matters
+
+External service outages can affect:
+- AI summarization (Groq, OpenRouter outages)
+- Deployment pipelines (Vercel, GitHub outages)
+- API availability (Cloudflare, AWS outages)
+
+Monitoring these services provides context when dashboard features behave unexpectedly.
 
 ---
 
@@ -2438,24 +2905,45 @@ Historical filtering is client-side—all data is fetched but filtered for displ
 
 | Layer | Technology | Purpose |
 |-------|------------|---------|
-| **Language** | TypeScript 5.x | Type safety across 50+ source files |
+| **Language** | TypeScript 5.x | Type safety across 60+ source files |
 | **Build** | Vite | Fast HMR, optimized production builds |
-| **Visualization** | D3.js + TopoJSON | SVG map rendering, zoom/pan, animations |
+| **Map (Desktop)** | deck.gl + MapLibre GL | WebGL-accelerated rendering for large datasets |
+| **Map (Mobile)** | D3.js + TopoJSON | SVG fallback for battery efficiency |
 | **Concurrency** | Web Workers | Off-main-thread clustering and correlation |
+| **AI/ML** | ONNX Runtime Web | Browser-based inference for offline summarization |
 | **Networking** | WebSocket + REST | Real-time AIS stream, HTTP for other APIs |
 | **Storage** | IndexedDB | Snapshots, baselines (megabytes of state) |
 | **Preferences** | LocalStorage | User settings, monitors, panel order |
 | **Deployment** | Vercel Edge | Serverless proxies with global distribution |
 
+### Map Rendering Architecture
+
+The map uses a hybrid rendering strategy optimized for each platform:
+
+**Desktop (deck.gl + MapLibre GL)**:
+- WebGL-accelerated layers handle thousands of markers smoothly
+- MapLibre GL provides base map tiles (OpenStreetMap)
+- GeoJSON, Scatterplot, Path, and Icon layers for different data types
+- GPU-based clustering and picking for responsive interaction
+
+**Mobile (D3.js + TopoJSON)**:
+- SVG rendering for battery efficiency
+- Reduced marker count and simplified layers
+- Touch-optimized interaction with larger hit targets
+- Automatic fallback when WebGL unavailable
+
 ### Key Libraries
 
-- **D3.js**: Map projection, SVG rendering, zoom behavior
+- **deck.gl**: High-performance WebGL visualization layers
+- **MapLibre GL**: Open-source map rendering engine
+- **D3.js**: SVG map rendering, zoom behavior (mobile fallback)
 - **TopoJSON**: Efficient geographic data encoding
-- **DOMPurify pattern**: HTML escaping (custom implementation)
+- **ONNX Runtime**: Browser-based ML inference
+- **Custom HTML escaping**: XSS prevention (DOMPurify pattern)
 
 ### No External UI Frameworks
 
-The entire UI is hand-crafted DOM manipulation—no React, Vue, or Angular. This keeps the bundle small (~200KB gzipped) and provides fine-grained control over rendering performance.
+The entire UI is hand-crafted DOM manipulation—no React, Vue, or Angular. This keeps the bundle small (~250KB gzipped) and provides fine-grained control over rendering performance.
 
 ### Build-Time Configuration
 
@@ -2548,12 +3036,15 @@ src/
 ├── App.ts                    # Main application orchestrator
 ├── main.ts                   # Entry point
 ├── components/
-│   ├── Map.ts                # D3.js map with 20+ toggleable layers
+│   ├── DeckGLMap.ts          # WebGL map with deck.gl + MapLibre (desktop)
+│   ├── Map.ts                # D3.js SVG map (mobile fallback)
+│   ├── MapContainer.ts       # Map wrapper with platform detection
 │   ├── MapPopup.ts           # Contextual info popups
 │   ├── SearchModal.ts        # Universal search (⌘K)
-│   ├── SignalModal.ts        # Signal intelligence display
+│   ├── SignalModal.ts        # Signal intelligence display with focal points
 │   ├── PizzIntIndicator.ts   # Pentagon Pizza Index display
 │   ├── VirtualList.ts        # Virtual/windowed scrolling
+│   ├── InsightsPanel.ts      # AI briefings + focal point display
 │   ├── EconomicPanel.ts      # FRED economic indicators
 │   ├── GdeltIntelPanel.ts    # Topic-based intelligence (cyber, military, etc.)
 │   ├── LiveNewsPanel.ts      # YouTube live news streams with channel switching
@@ -2563,6 +3054,7 @@ src/
 │   ├── CIIPanel.ts           # Country Instability Index display
 │   ├── CascadePanel.ts       # Infrastructure cascade analysis
 │   ├── StrategicRiskPanel.ts # Strategic risk overview dashboard
+│   ├── ServiceStatusPanel.ts # External service health monitoring
 │   └── ...
 ├── config/
 │   ├── feeds.ts              # 70+ RSS feeds, source tiers, regional sources
@@ -2578,19 +3070,21 @@ src/
 │   ├── entities.ts           # 100+ entity definitions (companies, indices, commodities, countries)
 │   └── panels.ts             # Panel configs, layer defaults, mobile optimizations
 ├── services/
-│   ├── ais.ts                # WebSocket vessel tracking
-│   ├── military-vessels.ts   # Naval vessel identification
-│   ├── military-flights.ts   # Aircraft tracking via OpenSky
+│   ├── ais.ts                # WebSocket vessel tracking with density analysis
+│   ├── military-vessels.ts   # Naval vessel identification and tracking
+│   ├── military-flights.ts   # Aircraft tracking via OpenSky relay
+│   ├── military-surge.ts     # Surge detection with news correlation
 │   ├── wingbits.ts           # Aircraft enrichment (owner, operator, type)
 │   ├── pizzint.ts            # Pentagon Pizza Index + GDELT tensions
 │   ├── protests.ts           # ACLED + GDELT integration
 │   ├── gdelt-intel.ts        # GDELT Doc API topic intelligence
+│   ├── gdacs.ts              # UN GDACS disaster alerts
+│   ├── eonet.ts              # NASA EONET natural events + GDACS merge
 │   ├── flights.ts            # FAA delay parsing
 │   ├── outages.ts            # Cloudflare Radar integration
 │   ├── rss.ts                # RSS parsing with circuit breakers
 │   ├── markets.ts            # Finnhub, Yahoo Finance, CoinGecko
 │   ├── earthquakes.ts        # USGS integration
-│   ├── eonet.ts              # NASA EONET natural events
 │   ├── weather.ts            # NWS alerts
 │   ├── fred.ts               # Federal Reserve data
 │   ├── oil-analytics.ts      # EIA oil prices, production, inventory
@@ -2602,7 +3096,13 @@ src/
 │   ├── related-assets.ts     # Infrastructure near news events
 │   ├── activity-tracker.ts   # New item detection & highlighting
 │   ├── analysis-worker.ts    # Web Worker manager
+│   ├── ml-worker.ts          # Browser ML inference (ONNX)
+│   ├── summarization.ts      # AI briefings with fallback chain
+│   ├── parallel-analysis.ts  # Concurrent headline analysis
 │   ├── storage.ts            # IndexedDB snapshots & baselines
+│   ├── data-freshness.ts     # Real-time data staleness tracking
+│   ├── signal-aggregator.ts  # Central signal collection & grouping
+│   ├── focal-point-detector.ts   # Intelligence synthesis layer
 │   ├── entity-index.ts       # Entity lookup maps (by alias, keyword, sector)
 │   ├── entity-extraction.ts  # News-to-entity matching for market correlation
 │   ├── country-instability.ts    # CII scoring algorithm
@@ -2795,6 +3295,13 @@ See [ROADMAP.md](ROADMAP.md) for detailed planning. Recent intelligence enhancem
 
 ### Completed
 
+- ✅ **Focal Point Detection** - Intelligence synthesis correlating news entities with map signals
+- ✅ **AI-Powered Briefings** - Groq/OpenRouter/Browser ML fallback chain for summarization
+- ✅ **Military Surge Detection** - Alerts when multiple operators converge on regions
+- ✅ **News-Signal Correlation** - Surge alerts include related focal point context
+- ✅ **GDACS Integration** - UN disaster alert system for earthquakes, floods, cyclones, volcanoes
+- ✅ **WebGL Map (deck.gl)** - High-performance rendering for desktop users
+- ✅ **Browser ML Fallback** - ONNX Runtime for offline summarization capability
 - ✅ **Multi-Signal Geographic Convergence** - Alerts when 3+ data types converge on same region within 24h
 - ✅ **Country Instability Index (CII)** - Real-time composite risk score for 20 Tier-1 countries
 - ✅ **Infrastructure Cascade Visualization** - Dependency graph showing downstream effects of disruptions
@@ -2813,6 +3320,7 @@ See [ROADMAP.md](ROADMAP.md) for detailed planning. Recent intelligence enhancem
 - ✅ **Variant Switcher UI** - Compact orbital navigation between World Monitor and Tech Monitor
 - ✅ **CII Learning Mode** - 15-minute calibration period with visual progress indicator
 - ✅ **Regional Tech Coverage** - Verified tech HQ data for MENA, Europe, Asia-Pacific hubs
+- ✅ **Service Status Panel** - External service health monitoring (AI providers, cloud platforms)
 
 ### Planned
 

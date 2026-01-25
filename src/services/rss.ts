@@ -1,5 +1,5 @@
 import type { Feed, NewsItem } from '@/types';
-import { ALERT_KEYWORDS } from '@/config';
+import { ALERT_KEYWORDS, ALERT_EXCLUSIONS } from '@/config';
 import { chunkArray, fetchWithProxy } from '@/utils';
 
 // Per-feed circuit breaker: track failures and cooldowns
@@ -127,9 +127,11 @@ export async function fetchFeed(feed: Feed): Promise<NewsItem[]> {
           : (item.querySelector('pubDate')?.textContent || '');
         const pubDate = pubDateStr ? new Date(pubDateStr) : new Date();
 
-        const isAlert = ALERT_KEYWORDS.some((kw) =>
-          title.toLowerCase().includes(kw)
-        );
+        // Check for alert keywords, but exclude lifestyle/entertainment content
+        const titleLower = title.toLowerCase();
+        const hasAlertKeyword = ALERT_KEYWORDS.some((kw) => titleLower.includes(kw));
+        const hasExclusion = ALERT_EXCLUSIONS.some((ex) => titleLower.includes(ex));
+        const isAlert = hasAlertKeyword && !hasExclusion;
 
         return {
           source: feed.name,

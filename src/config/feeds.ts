@@ -325,8 +325,9 @@ const FULL_FEEDS: Record<string, Feed[]> = {
   middleeast: [
     { name: 'BBC Middle East', url: rss('https://feeds.bbci.co.uk/news/world/middle_east/rss.xml') },
     { name: 'Al Jazeera', url: rss('https://www.aljazeera.com/xml/rss/all.xml') },
-    { name: 'Al Arabiya', url: railwayRss('https://english.alarabiya.net/.mrss/en/News/middle-east.xml') },
-    { name: 'Arab News', url: railwayRss('https://www.arabnews.com/cat/1/rss.xml') },
+    // AlArabiya blocks cloud IPs (Cloudflare), use Google News fallback
+    { name: 'Al Arabiya', url: rss('https://news.google.com/rss/search?q=site:english.alarabiya.net+when:2d&hl=en-US&gl=US&ceid=US:en') },
+    { name: 'Arab News', url: railwayRss('https://www.arabnews.com/cat/2/rss.xml') },
     { name: 'Times of Israel', url: railwayRss('https://www.timesofisrael.com/feed/') },
     { name: 'Guardian ME', url: rss('https://www.theguardian.com/world/middleeast/rss') },
     { name: 'CNN World', url: rss('http://rss.cnn.com/rss/cnn_world.rss') },
@@ -394,7 +395,7 @@ const FULL_FEEDS: Record<string, Feed[]> = {
   africa: [
     { name: 'Africa News', url: rss('https://news.google.com/rss/search?q=(Africa+OR+Nigeria+OR+Kenya+OR+"South+Africa"+OR+Ethiopia)+when:2d&hl=en-US&gl=US&ceid=US:en') },
     { name: 'Sahel Crisis', url: rss('https://news.google.com/rss/search?q=(Sahel+OR+Mali+OR+Niger+OR+"Burkina+Faso"+OR+Wagner)+when:3d&hl=en-US&gl=US&ceid=US:en') },
-    { name: 'News24', url: railwayRss('https://feeds.24.com/articles/news24/Africa/rss') },
+    { name: 'News24', url: railwayRss('https://feeds.capi24.com/v1/Search/articles/news24/Africa/rss') },
     { name: 'BBC Africa', url: rss('https://feeds.bbci.co.uk/news/world/africa/rss.xml') },
   ],
   latam: [
@@ -406,7 +407,7 @@ const FULL_FEEDS: Record<string, Feed[]> = {
   asia: [
     { name: 'Asia News', url: rss('https://news.google.com/rss/search?q=(China+OR+Japan+OR+Korea+OR+India+OR+ASEAN)+when:2d&hl=en-US&gl=US&ceid=US:en') },
     { name: 'BBC Asia', url: rss('https://feeds.bbci.co.uk/news/world/asia/rss.xml') },
-    { name: 'South China Morning Post', url: railwayRss('https://www.scmp.com/rss/91/feed') },
+    { name: 'South China Morning Post', url: railwayRss('https://www.scmp.com/rss/91/feed/') },
     { name: 'Reuters Asia', url: rss('https://news.google.com/rss/search?q=site:reuters.com+(China+OR+Japan+OR+Taiwan+OR+Korea)+when:3d&hl=en-US&gl=US&ceid=US:en') },
   ],
   energy: [
@@ -661,9 +662,18 @@ export const INTEL_SOURCES: Feed[] = [
   { name: 'Krebs Security', url: rss('https://krebsonsecurity.com/feed/'), type: 'cyber' },
 ];
 
+// Keywords that trigger alert status - must be specific to avoid false positives
 export const ALERT_KEYWORDS = [
   'war', 'invasion', 'military', 'nuclear', 'sanctions', 'missile',
-  'attack', 'troops', 'conflict', 'strike', 'bomb', 'casualties',
-  'ceasefire', 'treaty', 'nato', 'coup', 'martial law', 'emergency',
-  'assassination', 'terrorist', 'hostage', 'evacuation', 'breaking',
+  'airstrike', 'drone strike', 'troops deployed', 'armed conflict', 'bombing', 'casualties',
+  'ceasefire', 'peace treaty', 'nato', 'coup', 'martial law',
+  'assassination', 'terrorist', 'terror attack', 'cyber attack', 'hostage', 'evacuation order',
+];
+
+// Patterns that indicate non-alert content (lifestyle, entertainment, etc.)
+export const ALERT_EXCLUSIONS = [
+  'protein', 'couples', 'relationship', 'dating', 'diet', 'fitness',
+  'recipe', 'cooking', 'shopping', 'fashion', 'celebrity', 'movie',
+  'tv show', 'sports', 'game', 'concert', 'festival', 'wedding',
+  'vacation', 'travel tips', 'life hack', 'self-care', 'wellness',
 ];

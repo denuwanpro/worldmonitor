@@ -17,7 +17,7 @@ interface SearchableSource {
 
 const RECENT_SEARCHES_KEY = 'worldmonitor_recent_searches';
 const MAX_RECENT = 8;
-const MAX_RESULTS = 12;
+const MAX_RESULTS = 24;
 
 interface SearchModalOptions {
   placeholder?: string;
@@ -119,7 +119,8 @@ export class SearchModal {
       return;
     }
 
-    this.results = [];
+    // Collect matches grouped by type
+    const byType = new Map<SearchResultType, (SearchResult & { _score: number })[]>();
 
     for (const source of this.sources) {
       for (const item of source.items) {
@@ -128,20 +129,38 @@ export class SearchModal {
 
         if (titleLower.includes(query) || subtitleLower.includes(query)) {
           const isPrefix = titleLower.startsWith(query) || subtitleLower.startsWith(query);
-          this.results.push({
+          const result = {
             type: source.type,
             id: item.id,
             title: item.title,
             subtitle: item.subtitle,
             data: item.data,
             _score: isPrefix ? 2 : 1,
-          } as SearchResult & { _score: number });
+          } as SearchResult & { _score: number };
+
+          if (!byType.has(source.type)) byType.set(source.type, []);
+          byType.get(source.type)!.push(result);
         }
       }
     }
 
-    // Sort by score (prefix matches first), then limit
-    this.results.sort((a, b) => ((b as any)._score || 0) - ((a as any)._score || 0));
+    // Prioritize: news first, then other dynamic data, then static infrastructure
+    const priority: SearchResultType[] = [
+      'news', 'prediction', 'market', 'earthquake', 'outage',  // Dynamic/timely
+      'conflict', 'hotspot',  // Current events
+      'base', 'pipeline', 'cable', 'datacenter', 'nuclear', 'irradiator',  // Infrastructure
+      'techcompany', 'ailab', 'startup', 'techevent', 'techhq', 'accelerator'  // Tech
+    ];
+
+    // Take top matches from each type, news gets more slots
+    this.results = [];
+    for (const type of priority) {
+      const matches = byType.get(type) || [];
+      matches.sort((a, b) => b._score - a._score);
+      const limit = type === 'news' ? 6 : 3;  // News gets 6 slots, others get 3
+      this.results.push(...matches.slice(0, limit));
+      if (this.results.length >= MAX_RESULTS) break;
+    }
     this.results = this.results.slice(0, MAX_RESULTS);
 
     this.selectedIndex = 0;

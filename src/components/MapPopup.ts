@@ -1,7 +1,5 @@
 import type { ConflictZone, Hotspot, Earthquake, NewsItem, MilitaryBase, StrategicWaterway, APTGroup, NuclearFacility, EconomicCenter, GammaIrradiator, Pipeline, UnderseaCable, CableAdvisory, RepairShip, InternetOutage, AIDataCenter, AisDisruptionEvent, SocialUnrestEvent, AirportDelayAlert, MilitaryFlight, MilitaryVessel, MilitaryFlightCluster, MilitaryVesselCluster, NaturalEvent, Port, Spaceport, CriticalMineralProject } from '@/types';
 import type { WeatherAlert } from '@/services/weather';
-import type { TechHubActivity } from '@/services/tech-activity';
-import type { GeoHubActivity } from '@/services/geo-activity';
 import { UNDERSEA_CABLES } from '@/config';
 import type { StartupHub, Accelerator, TechHQ, CloudRegion } from '@/config/tech-geo';
 import { escapeHtml, sanitizeUrl } from '@/utils/sanitize';
@@ -10,10 +8,7 @@ import { fetchHotspotContext, formatArticleDate, extractDomain, type GdeltArticl
 import { getNaturalEventIcon } from '@/services/eonet';
 import { getHotspotEscalation, getEscalationChange24h } from '@/services/hotspot-escalation';
 
-export type PopupType = 'conflict' | 'hotspot' | 'earthquake' | 'weather' | 'base' | 'waterway' | 'apt' | 'nuclear' | 'economic' | 'irradiator' | 'pipeline' | 'cable' | 'cable-advisory' | 'repair-ship' | 'outage' | 'datacenter' | 'ais' | 'protest' | 'protestCluster' | 'flight' | 'militaryFlight' | 'militaryVessel' | 'militaryFlightCluster' | 'militaryVesselCluster' | 'natEvent' | 'port' | 'spaceport' | 'mineral' | 'startupHub' | 'cloudRegion' | 'techHQ' | 'accelerator' | 'techEvent' | 'techHQCluster' | 'techEventCluster' | 'techActivity' | 'geoActivity';
-
-type TechHubActivityPopup = TechHubActivity;
-type GeoHubActivityPopup = GeoHubActivity;
+export type PopupType = 'conflict' | 'hotspot' | 'earthquake' | 'weather' | 'base' | 'waterway' | 'apt' | 'nuclear' | 'economic' | 'irradiator' | 'pipeline' | 'cable' | 'cable-advisory' | 'repair-ship' | 'outage' | 'datacenter' | 'datacenterCluster' | 'ais' | 'protest' | 'protestCluster' | 'flight' | 'militaryFlight' | 'militaryVessel' | 'militaryFlightCluster' | 'militaryVesselCluster' | 'natEvent' | 'port' | 'spaceport' | 'mineral' | 'startupHub' | 'cloudRegion' | 'techHQ' | 'accelerator' | 'techEvent' | 'techHQCluster' | 'techEventCluster';
 
 interface TechEventPopupData {
   id: string;
@@ -45,9 +40,15 @@ interface ProtestClusterData {
   country: string;
 }
 
+interface DatacenterClusterData {
+  items: AIDataCenter[];
+  region: string;
+  country: string;
+}
+
 interface PopupData {
   type: PopupType;
-  data: ConflictZone | Hotspot | Earthquake | WeatherAlert | MilitaryBase | StrategicWaterway | APTGroup | NuclearFacility | EconomicCenter | GammaIrradiator | Pipeline | UnderseaCable | CableAdvisory | RepairShip | InternetOutage | AIDataCenter | AisDisruptionEvent | SocialUnrestEvent | AirportDelayAlert | MilitaryFlight | MilitaryVessel | MilitaryFlightCluster | MilitaryVesselCluster | NaturalEvent | Port | Spaceport | CriticalMineralProject | StartupHub | CloudRegion | TechHQ | Accelerator | TechEventPopupData | TechHQClusterData | TechEventClusterData | ProtestClusterData | TechHubActivityPopup | GeoHubActivityPopup;
+  data: ConflictZone | Hotspot | Earthquake | WeatherAlert | MilitaryBase | StrategicWaterway | APTGroup | NuclearFacility | EconomicCenter | GammaIrradiator | Pipeline | UnderseaCable | CableAdvisory | RepairShip | InternetOutage | AIDataCenter | AisDisruptionEvent | SocialUnrestEvent | AirportDelayAlert | MilitaryFlight | MilitaryVessel | MilitaryFlightCluster | MilitaryVesselCluster | NaturalEvent | Port | Spaceport | CriticalMineralProject | StartupHub | CloudRegion | TechHQ | Accelerator | TechEventPopupData | TechHQClusterData | TechEventClusterData | ProtestClusterData | DatacenterClusterData;
   relatedNews?: NewsItem[];
   x: number;
   y: number;
@@ -85,9 +86,17 @@ export class MapPopup {
       // Desktop: position near click with smart bounds checking
       this.popup.style.transform = '';
       const popupWidth = 380;
-      const popupHeight = 500; // Approximate max height for hotspot popups
       const bottomBuffer = 50; // Buffer from viewport bottom
       const topBuffer = 60; // Header height
+
+      // Temporarily append popup off-screen to measure actual height
+      this.popup.style.visibility = 'hidden';
+      this.popup.style.top = '0';
+      this.popup.style.left = '-9999px';
+      document.body.appendChild(this.popup);
+      const popupHeight = this.popup.offsetHeight;
+      document.body.removeChild(this.popup);
+      this.popup.style.visibility = '';
 
       // Convert container-relative coords to viewport coords
       const viewportX = containerRect.left + data.x;
@@ -113,9 +122,12 @@ export class MapPopup {
         // Not enough below, but enough above - position above click
         top = viewportY - popupHeight - 10;
       } else {
-        // Limited space both ways - position at top with max height
+        // Limited space both ways - position at top buffer
         top = topBuffer;
       }
+
+      // CRITICAL: Ensure popup never goes above the top buffer (header area)
+      top = Math.max(topBuffer, top);
 
       this.popup.style.left = `${left}px`;
       this.popup.style.top = `${top}px`;
@@ -191,6 +203,8 @@ export class MapPopup {
         return this.renderOutagePopup(data.data as InternetOutage);
       case 'datacenter':
         return this.renderDatacenterPopup(data.data as AIDataCenter);
+      case 'datacenterCluster':
+        return this.renderDatacenterClusterPopup(data.data as DatacenterClusterData);
       case 'ais':
         return this.renderAisPopup(data.data as AisDisruptionEvent);
       case 'protest':
@@ -229,10 +243,6 @@ export class MapPopup {
         return this.renderTechHQClusterPopup(data.data as { items: TechHQ[]; city: string; country: string });
       case 'techEventCluster':
         return this.renderTechEventClusterPopup(data.data as { items: TechEventPopupData[]; location: string; country: string });
-      case 'techActivity':
-        return this.renderTechActivityPopup(data.data as TechHubActivityPopup);
-      case 'geoActivity':
-        return this.renderGeoActivityPopup(data.data as GeoHubActivityPopup);
       default:
         return '';
     }
@@ -1290,6 +1300,65 @@ export class MapPopup {
     `;
   }
 
+  private renderDatacenterClusterPopup(data: DatacenterClusterData): string {
+    const totalChips = data.items.reduce((sum, dc) => sum + dc.chipCount, 0);
+    const totalPower = data.items.reduce((sum, dc) => sum + (dc.powerMW || 0), 0);
+    const existingCount = data.items.filter(dc => dc.status === 'existing').length;
+    const plannedCount = data.items.filter(dc => dc.status === 'planned').length;
+
+    const formatNumber = (n: number) => {
+      if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
+      if (n >= 1000) return `${(n / 1000).toFixed(0)}K`;
+      return n.toString();
+    };
+
+    const dcListHtml = data.items.slice(0, 8).map(dc => `
+      <div class="cluster-item">
+        <span class="cluster-item-icon">${dc.status === 'planned' ? '🔨' : '🖥️'}</span>
+        <div class="cluster-item-info">
+          <span class="cluster-item-name">${escapeHtml(dc.name.slice(0, 40))}${dc.name.length > 40 ? '...' : ''}</span>
+          <span class="cluster-item-detail">${escapeHtml(dc.owner)} • ${formatNumber(dc.chipCount)} chips</span>
+        </div>
+      </div>
+    `).join('');
+
+    return `
+      <div class="popup-header datacenter cluster">
+        <span class="popup-title">🖥️ ${data.items.length} Data Centers</span>
+        <span class="popup-badge elevated">${escapeHtml(data.region)}</span>
+        <button class="popup-close">×</button>
+      </div>
+      <div class="popup-body">
+        <div class="popup-subtitle">${escapeHtml(data.country)}</div>
+        <div class="popup-stats">
+          <div class="popup-stat">
+            <span class="stat-label">TOTAL CHIPS</span>
+            <span class="stat-value">${formatNumber(totalChips)}</span>
+          </div>
+          ${totalPower > 0 ? `
+          <div class="popup-stat">
+            <span class="stat-label">TOTAL POWER</span>
+            <span class="stat-value">${totalPower.toFixed(0)} MW</span>
+          </div>
+          ` : ''}
+          <div class="popup-stat">
+            <span class="stat-label">OPERATIONAL</span>
+            <span class="stat-value">${existingCount}</span>
+          </div>
+          <div class="popup-stat">
+            <span class="stat-label">PLANNED</span>
+            <span class="stat-value">${plannedCount}</span>
+          </div>
+        </div>
+        <div class="cluster-list">
+          ${dcListHtml}
+        </div>
+        ${data.items.length > 8 ? `<p class="popup-more">+ ${data.items.length - 8} more data centers</p>` : ''}
+        <div class="popup-attribution">Data: Epoch AI GPU Clusters</div>
+      </div>
+    `;
+  }
+
   private renderStartupHubPopup(hub: StartupHub): string {
     const tierLabels: Record<string, string> = { 'mega': 'MEGA HUB', 'major': 'MAJOR HUB', 'emerging': 'EMERGING' };
     const tierIcons: Record<string, string> = { 'mega': '🦄', 'major': '🚀', 'emerging': '💡' };
@@ -1985,148 +2054,6 @@ export class MapPopup {
           </div>
         </div>
         <p class="popup-description">${escapeHtml(mine.significance)}</p>
-      </div>
-    `;
-  }
-
-  private renderTechActivityPopup(activity: TechHubActivityPopup): string {
-    const levelColors: Record<string, string> = {
-      high: 'elevated',
-      elevated: 'low',
-      low: '',
-    };
-    const trendIcons: Record<string, string> = {
-      rising: '↑',
-      stable: '→',
-      falling: '↓',
-    };
-
-    const storiesHtml = activity.topStories.length > 0
-      ? `<div class="popup-section">
-          <span class="section-label">TOP STORIES</span>
-          <div class="popup-news-list">
-            ${activity.topStories.map(story => `
-              <a class="popup-news-item" href="${sanitizeUrl(story.link)}" target="_blank" rel="noopener">
-                ${escapeHtml(story.title.length > 80 ? story.title.slice(0, 77) + '...' : story.title)}
-              </a>
-            `).join('')}
-          </div>
-        </div>`
-      : '';
-
-    const keywordsHtml = activity.matchedKeywords.length > 0
-      ? `<div class="popup-section">
-          <span class="section-label">MATCHED KEYWORDS</span>
-          <div class="popup-tags">
-            ${activity.matchedKeywords.slice(0, 5).map(kw => `<span class="popup-tag">${escapeHtml(kw)}</span>`).join('')}
-          </div>
-        </div>`
-      : '';
-
-    return `
-      <div class="popup-header tech-activity ${activity.activityLevel}">
-        <span class="popup-title">${escapeHtml(activity.city.toUpperCase())}</span>
-        <span class="popup-badge ${levelColors[activity.activityLevel]}">${activity.activityLevel.toUpperCase()}</span>
-        <button class="popup-close">×</button>
-      </div>
-      <div class="popup-body">
-        <div class="popup-subtitle">${escapeHtml(activity.country)} • ${escapeHtml(activity.tier)} hub</div>
-        <div class="popup-stats">
-          <div class="popup-stat">
-            <span class="stat-label">NEWS COUNT</span>
-            <span class="stat-value">${activity.newsCount}</span>
-          </div>
-          <div class="popup-stat">
-            <span class="stat-label">ACTIVITY SCORE</span>
-            <span class="stat-value">${Math.round(activity.score)}</span>
-          </div>
-          <div class="popup-stat">
-            <span class="stat-label">TREND</span>
-            <span class="stat-value">${trendIcons[activity.trend]} ${activity.trend}</span>
-          </div>
-          ${activity.hasBreaking ? `
-          <div class="popup-stat">
-            <span class="stat-label">STATUS</span>
-            <span class="stat-value" style="color: var(--red);">BREAKING</span>
-          </div>
-          ` : ''}
-        </div>
-        ${storiesHtml}
-        ${keywordsHtml}
-      </div>
-    `;
-  }
-
-  private renderGeoActivityPopup(activity: GeoHubActivityPopup): string {
-    const levelColors: Record<string, string> = {
-      high: 'high',
-      elevated: 'elevated',
-      low: '',
-    };
-    const trendIcons: Record<string, string> = {
-      rising: '↑',
-      stable: '→',
-      falling: '↓',
-    };
-    const typeLabels: Record<string, string> = {
-      capital: 'Capital',
-      conflict: 'Conflict Zone',
-      strategic: 'Strategic Region',
-      organization: 'Organization',
-    };
-
-    const storiesHtml = activity.topStories.length > 0
-      ? `<div class="popup-section">
-          <span class="section-label">TOP STORIES</span>
-          <div class="popup-news-list">
-            ${activity.topStories.map(story => `
-              <a class="popup-news-item" href="${sanitizeUrl(story.link)}" target="_blank" rel="noopener">
-                ${escapeHtml(story.title.length > 80 ? story.title.slice(0, 77) + '...' : story.title)}
-              </a>
-            `).join('')}
-          </div>
-        </div>`
-      : '';
-
-    const keywordsHtml = activity.matchedKeywords.length > 0
-      ? `<div class="popup-section">
-          <span class="section-label">MATCHED KEYWORDS</span>
-          <div class="popup-tags">
-            ${activity.matchedKeywords.slice(0, 5).map(kw => `<span class="popup-tag">${escapeHtml(kw)}</span>`).join('')}
-          </div>
-        </div>`
-      : '';
-
-    return `
-      <div class="popup-header geo-activity ${activity.activityLevel}">
-        <span class="popup-title">${escapeHtml(activity.name.toUpperCase())}</span>
-        <span class="popup-badge ${levelColors[activity.activityLevel]}">${activity.activityLevel.toUpperCase()}</span>
-        <button class="popup-close">×</button>
-      </div>
-      <div class="popup-body">
-        <div class="popup-subtitle">${escapeHtml(activity.country)} • ${typeLabels[activity.type] || activity.type}</div>
-        <div class="popup-stats">
-          <div class="popup-stat">
-            <span class="stat-label">NEWS COUNT</span>
-            <span class="stat-value">${activity.newsCount}</span>
-          </div>
-          <div class="popup-stat">
-            <span class="stat-label">ACTIVITY SCORE</span>
-            <span class="stat-value">${Math.round(activity.score)}</span>
-          </div>
-          <div class="popup-stat">
-            <span class="stat-label">TREND</span>
-            <span class="stat-value">${trendIcons[activity.trend]} ${activity.trend}</span>
-          </div>
-          ${activity.hasBreaking ? `
-          <div class="popup-stat">
-            <span class="stat-label">STATUS</span>
-            <span class="stat-value" style="color: var(--red);">ALERT</span>
-          </div>
-          ` : ''}
-        </div>
-        ${storiesHtml}
-        ${keywordsHtml}
       </div>
     `;
   }

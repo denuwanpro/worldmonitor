@@ -3,11 +3,14 @@ import { WindowedList } from './VirtualList';
 import type { NewsItem, ClusteredEvent, DeviationLevel, RelatedAsset, RelatedAssetContext } from '@/types';
 import { formatTime } from '@/utils';
 import { escapeHtml, sanitizeUrl } from '@/utils/sanitize';
-import { analysisWorker, enrichWithVelocity, getClusterAssetContext, getAssetLabel, MAX_DISTANCE_KM, activityTracker } from '@/services';
+import { analysisWorker, enrichWithVelocityML, getClusterAssetContext, getAssetLabel, MAX_DISTANCE_KM, activityTracker, generateSummary } from '@/services';
 import { getSourcePropagandaRisk, getSourceTier, getSourceType } from '@/config/feeds';
 
 /** Threshold for enabling virtual scrolling */
 const VIRTUAL_SCROLL_THRESHOLD = 15;
+
+/** Summary cache TTL in milliseconds (10 minutes) */
+const SUMMARY_CACHE_TTL = 10 * 60 * 1000;
 
 /** Prepared cluster data for rendering */
 interface PreparedCluster {
@@ -31,9 +34,16 @@ export class NewsPanel extends Panel {
   private boundScrollHandler: (() => void) | null = null;
   private boundClickHandler: (() => void) | null = null;
 
+  // Panel summary feature
+  private summaryBtn: HTMLButtonElement | null = null;
+  private summaryContainer: HTMLElement | null = null;
+  private currentHeadlines: string[] = [];
+  private isSummarizing = false;
+
   constructor(id: string, title: string) {
     super({ id, title, showCount: true, trackActivity: true });
     this.createDeviationIndicator();
+    this.createSummarizeButton();
     this.setupActivityTracking();
     this.initWindowedList();
   }
@@ -97,6 +107,108 @@ export class NewsPanel extends Panel {
     }
   }
 
+  private createSummarizeButton(): void {
+    // Create summary container (inserted between header and content)
+    this.summaryContainer = document.createElement('div');
+    this.summaryContainer.className = 'panel-summary';
+    this.summaryContainer.style.display = 'none';
+    this.element.insertBefore(this.summaryContainer, this.content);
+
+    // Create summarize button
+    this.summaryBtn = document.createElement('button');
+    this.summaryBtn.className = 'panel-summarize-btn';
+    this.summaryBtn.innerHTML = '✨';
+    this.summaryBtn.title = 'Summarize this panel';
+    this.summaryBtn.addEventListener('click', () => this.handleSummarize());
+
+    // Insert before count element (use inherited this.header directly)
+    const countEl = this.header.querySelector('.panel-count');
+    if (countEl) {
+      this.header.insertBefore(this.summaryBtn, countEl);
+    } else {
+      this.header.appendChild(this.summaryBtn);
+    }
+  }
+
+  private async handleSummarize(): Promise<void> {
+    if (this.isSummarizing || !this.summaryContainer || !this.summaryBtn) return;
+    if (this.currentHeadlines.length === 0) return;
+
+    // Check cache first
+    const cacheKey = `panel_summary_${this.panelId}`;
+    const cached = this.getCachedSummary(cacheKey);
+    if (cached) {
+      this.showSummary(cached);
+      return;
+    }
+
+    // Show loading state
+    this.isSummarizing = true;
+    this.summaryBtn.innerHTML = '<span class="panel-summarize-spinner"></span>';
+    this.summaryBtn.disabled = true;
+    this.summaryContainer.style.display = 'block';
+    this.summaryContainer.innerHTML = '<div class="panel-summary-loading">Generating summary...</div>';
+
+    try {
+      const result = await generateSummary(this.currentHeadlines.slice(0, 8));
+      if (result?.summary) {
+        this.setCachedSummary(cacheKey, result.summary);
+        this.showSummary(result.summary);
+      } else {
+        this.summaryContainer.innerHTML = '<div class="panel-summary-error">Could not generate summary</div>';
+        setTimeout(() => this.hideSummary(), 3000);
+      }
+    } catch {
+      this.summaryContainer.innerHTML = '<div class="panel-summary-error">Summary failed</div>';
+      setTimeout(() => this.hideSummary(), 3000);
+    } finally {
+      this.isSummarizing = false;
+      this.summaryBtn.innerHTML = '✨';
+      this.summaryBtn.disabled = false;
+    }
+  }
+
+  private showSummary(summary: string): void {
+    if (!this.summaryContainer) return;
+    this.summaryContainer.style.display = 'block';
+    this.summaryContainer.innerHTML = `
+      <div class="panel-summary-content">
+        <span class="panel-summary-text">${escapeHtml(summary)}</span>
+        <button class="panel-summary-close" title="Close">×</button>
+      </div>
+    `;
+    this.summaryContainer.querySelector('.panel-summary-close')?.addEventListener('click', () => this.hideSummary());
+  }
+
+  private hideSummary(): void {
+    if (!this.summaryContainer) return;
+    this.summaryContainer.style.display = 'none';
+    this.summaryContainer.innerHTML = '';
+  }
+
+  private getCachedSummary(key: string): string | null {
+    try {
+      const cached = localStorage.getItem(key);
+      if (!cached) return null;
+      const { summary, timestamp } = JSON.parse(cached);
+      if (Date.now() - timestamp > SUMMARY_CACHE_TTL) {
+        localStorage.removeItem(key);
+        return null;
+      }
+      return summary;
+    } catch {
+      return null;
+    }
+  }
+
+  private setCachedSummary(key: string, summary: string): void {
+    try {
+      localStorage.setItem(key, JSON.stringify({ summary, timestamp: Date.now() }));
+    } catch {
+      // Storage full, ignore
+    }
+  }
+
   public setDeviation(zScore: number, percentChange: number, level: DeviationLevel): void {
     if (!this.deviationEl) return;
 
@@ -132,7 +244,7 @@ export class NewsPanel extends Panel {
     try {
       const clusters = await analysisWorker.clusterNews(items);
       if (requestId !== this.renderRequestId) return;
-      const enriched = enrichWithVelocity(clusters);
+      const enriched = await enrichWithVelocityML(clusters);
       this.renderClusters(enriched);
     } catch (error) {
       if (requestId !== this.renderRequestId) return;
@@ -166,6 +278,9 @@ export class NewsPanel extends Panel {
     const totalItems = clusters.reduce((sum, c) => sum + c.sourceCount, 0);
     this.setCount(totalItems);
     this.relatedAssetContext.clear();
+
+    // Store headlines for summarization
+    this.currentHeadlines = clusters.slice(0, 10).map(c => c.primaryTitle);
 
     // Track items with activity tracker (skip first render to avoid marking everything as "new")
     const clusterIds = clusters.map(c => c.id);
@@ -241,12 +356,12 @@ export class NewsPanel extends Panel {
       ? `<span class="propaganda-badge ${primaryPropRisk.risk}" title="${escapeHtml(primaryPropRisk.note || `State-affiliated: ${primaryPropRisk.stateAffiliated || 'Unknown'}`)}">${primaryPropRisk.risk === 'high' ? '⚠ State Media' : '! Caution'}</span>`
       : '';
 
-    // Source credibility badge for primary source
+    // Source credibility badge for primary source (T1=Wire, T2=Verified outlet)
     const primaryTier = getSourceTier(cluster.primarySource);
     const primaryType = getSourceType(cluster.primarySource);
-    const tierLabel = primaryTier === 1 ? 'Wire' : primaryTier === 2 ? 'Major' : '';
+    const tierLabel = primaryTier === 1 ? 'Wire' : ''; // Don't show "Major" - confusing with story importance
     const tierBadge = primaryTier <= 2
-      ? `<span class="tier-badge tier-${primaryTier}" title="${primaryType === 'wire' ? 'Wire Service - Highest reliability' : primaryType === 'gov' ? 'Official Government Source' : 'Major News Outlet'}">${primaryTier === 1 ? '★' : '●'} ${tierLabel}</span>`
+      ? `<span class="tier-badge tier-${primaryTier}" title="${primaryType === 'wire' ? 'Wire Service - Highest reliability' : primaryType === 'gov' ? 'Official Government Source' : 'Verified News Outlet'}">${primaryTier === 1 ? '★' : '●'}${tierLabel ? ` ${tierLabel}` : ''}</span>`
       : '';
 
     // Build "Also reported by" section for multi-source confirmation

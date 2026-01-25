@@ -1,4 +1,5 @@
 import type { ClusteredEvent, VelocityMetrics, VelocityLevel, SentimentType } from '@/types';
+import { mlWorker } from './ml-worker';
 
 const HOUR_MS = 60 * 60 * 1000;
 const ELEVATED_THRESHOLD = 3;
@@ -81,4 +82,61 @@ export function enrichWithVelocity(clusters: ClusteredEvent[]): ClusteredEvent[]
     ...cluster,
     velocity: calculateVelocity(cluster),
   }));
+}
+
+export async function calculateVelocityWithML(cluster: ClusteredEvent): Promise<VelocityMetrics> {
+  const baseMetrics = calculateVelocity(cluster);
+
+  if (!mlWorker.isAvailable) return baseMetrics;
+
+  try {
+    const results = await mlWorker.classifySentiment([cluster.primaryTitle]);
+    const sentiment = results[0];
+    if (!sentiment) return baseMetrics;
+
+    const mlSentiment: SentimentType = sentiment.label === 'positive' ? 'positive' :
+      sentiment.label === 'negative' ? 'negative' : 'neutral';
+    const mlScore = sentiment.label === 'negative' ? -sentiment.score : sentiment.score;
+
+    return {
+      ...baseMetrics,
+      sentiment: mlSentiment,
+      sentimentScore: mlScore,
+    };
+  } catch {
+    return baseMetrics;
+  }
+}
+
+export async function enrichWithVelocityML(clusters: ClusteredEvent[]): Promise<ClusteredEvent[]> {
+  if (!mlWorker.isAvailable) {
+    return enrichWithVelocity(clusters);
+  }
+
+  try {
+    const titles = clusters.map(c => c.primaryTitle);
+    const sentiments = await mlWorker.classifySentiment(titles);
+
+    return clusters.map((cluster, i) => {
+      const baseMetrics = calculateVelocity(cluster);
+      const sentiment = sentiments[i];
+      if (!sentiment) {
+        return { ...cluster, velocity: baseMetrics };
+      }
+
+      const mlSentiment: SentimentType = sentiment.label === 'positive' ? 'positive' :
+        sentiment.label === 'negative' ? 'negative' : 'neutral';
+
+      return {
+        ...cluster,
+        velocity: {
+          ...baseMetrics,
+          sentiment: mlSentiment,
+          sentimentScore: sentiment.label === 'negative' ? -sentiment.score : sentiment.score,
+        },
+      };
+    });
+  } catch {
+    return enrichWithVelocity(clusters);
+  }
 }

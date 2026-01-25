@@ -22,7 +22,6 @@ import {
   SANCTIONED_COUNTRIES,
   STRATEGIC_WATERWAYS,
   APT_GROUPS,
-  COUNTRY_LABELS,
   ECONOMIC_CENTERS,
   AI_DATA_CENTERS,
   PORTS,
@@ -335,13 +334,13 @@ export class MapComponent {
       'ais', 'flights',                                   // transport
       'natural', 'weather',                               // natural
       'economic',                                         // economic
-      'countries', 'waterways',                           // labels
+      'waterways',                                        // labels
     ];
     const techLayers: (keyof MapLayers)[] = [
       'cables', 'datacenters', 'outages',                // tech infrastructure
       'startupHubs', 'cloudRegions', 'accelerators', 'techHQs', 'techEvents', // tech ecosystem
       'natural', 'weather',                               // natural events
-      'economic', 'countries',                            // economic/geographic
+      'economic',                                         // economic/geographic
     ];
     const layers = SITE_VARIANT === 'tech' ? techLayers : fullLayers;
     const layerLabels: Partial<Record<keyof MapLayers, string>> = {
@@ -1163,12 +1162,6 @@ export class MapComponent {
 
   private renderOverlays(projection: d3.GeoProjection): void {
     this.overlays.innerHTML = '';
-
-    // Country labels (rendered first so they appear behind other overlays)
-    if (this.state.layers.countries) {
-      this.renderCountryLabels(projection);
-    }
-
 
     // Strategic waterways
     if (this.state.layers.waterways) {
@@ -2337,22 +2330,6 @@ export class MapComponent {
         this.overlays.appendChild(div);
       });
     }
-  }
-
-  private renderCountryLabels(projection: d3.GeoProjection): void {
-    COUNTRY_LABELS.forEach((country) => {
-      const pos = projection([country.lon, country.lat]);
-      if (!pos) return;
-
-      const div = document.createElement('div');
-      div.className = 'country-label';
-      div.style.left = `${pos[0]}px`;
-      div.style.top = `${pos[1]}px`;
-      div.textContent = country.name;
-      div.dataset.countryId = String(country.id);
-
-      this.overlays.appendChild(div);
-    });
   }
 
   private renderWaterways(projection: d3.GeoProjection): void {

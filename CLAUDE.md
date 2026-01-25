@@ -62,6 +62,48 @@ Some sources don't provide RSS feeds. Custom scrapers are in `/api/`:
 3. Add to feeds.ts: `{ name: 'Source', url: '/api/source-name' }`
 4. No need to add to rss-proxy allowlist (direct API, not proxied)
 
+## AI Summarization & Caching
+
+The AI Insights panel uses a server-side Redis cache to deduplicate API calls across users.
+
+### Required Environment Variables
+
+```bash
+# Groq API (primary summarization)
+GROQ_API_KEY=gsk_xxx
+
+# OpenRouter API (fallback)
+OPENROUTER_API_KEY=sk-or-xxx
+
+# Upstash Redis (cross-user caching)
+UPSTASH_REDIS_REST_URL=https://xxx.upstash.io
+UPSTASH_REDIS_REST_TOKEN=xxx
+```
+
+### How It Works
+
+1. User visits → `/api/groq-summarize` receives headlines
+2. Server hashes headlines → checks Redis cache
+3. **Cache hit** → return immediately (no API call)
+4. **Cache miss** → call Groq API → store in Redis (24h TTL) → return
+
+### Model Selection
+
+- **llama-3.1-8b-instant**: 14,400 req/day (used for summaries)
+- **llama-3.3-70b-versatile**: 1,000 req/day (quality but limited)
+
+### Fallback Chain
+
+1. Groq (fast, 14.4K/day) → Redis cache
+2. OpenRouter (50/day) → Redis cache
+3. Browser T5 (unlimited, slower, no cache)
+
+### Setup Upstash
+
+1. Create free account at [upstash.com](https://upstash.com)
+2. Create a new Redis database
+3. Copy REST URL and Token to Vercel env vars
+
 ## Service Status Panel
 
 Status page URLs in `api/service-status.js` must match the actual status page endpoint. Common formats:

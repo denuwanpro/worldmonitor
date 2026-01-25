@@ -1,5 +1,7 @@
 import type { SocialUnrestEvent, MilitaryFlight, MilitaryVessel, ClusteredEvent, InternetOutage } from '@/types';
 import { INTEL_HOTSPOTS, CONFLICT_ZONES, STRATEGIC_WATERWAYS } from '@/config/geo';
+import { TIER1_COUNTRIES } from '@/config/countries';
+import { focalPointDetector } from './focal-point-detector';
 
 export interface CountryScore {
   code: string;
@@ -26,33 +28,21 @@ interface CountryData {
   outages: InternetOutage[];
 }
 
-export const TIER1_COUNTRIES: Record<string, string> = {
-  US: 'United States',
-  RU: 'Russia',
-  CN: 'China',
-  UA: 'Ukraine',
-  IR: 'Iran',
-  IL: 'Israel',
-  TW: 'Taiwan',
-  KP: 'North Korea',
-  SA: 'Saudi Arabia',
-  TR: 'Turkey',
-  PL: 'Poland',
-  DE: 'Germany',
-  FR: 'France',
-  GB: 'United Kingdom',
-  IN: 'India',
-  PK: 'Pakistan',
-  SY: 'Syria',
-  YE: 'Yemen',
-  MM: 'Myanmar',
-  VE: 'Venezuela',
-};
+// Re-export for backwards compatibility
+export { TIER1_COUNTRIES } from '@/config/countries';
 
-// Learning Mode - warmup period for reliable data
+// Learning Mode - warmup period for reliable data (bypassed when cached scores exist)
 const LEARNING_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 let learningStartTime: number | null = null;
 let isLearningComplete = false;
+let hasCachedScoresAvailable = false;
+
+export function setHasCachedScores(hasScores: boolean): void {
+  hasCachedScoresAvailable = hasScores;
+  if (hasScores) {
+    isLearningComplete = true; // Skip learning when cached scores available
+  }
+}
 
 export function startLearning(): void {
   if (learningStartTime === null) {
@@ -61,6 +51,7 @@ export function startLearning(): void {
 }
 
 export function isInLearningMode(): boolean {
+  if (hasCachedScoresAvailable) return false; // Bypass if backend has cached scores
   if (isLearningComplete) return false;
   if (learningStartTime === null) return true;
 
@@ -73,7 +64,7 @@ export function isInLearningMode(): boolean {
 }
 
 export function getLearningProgress(): { inLearning: boolean; remainingMinutes: number; progress: number } {
-  if (isLearningComplete) {
+  if (hasCachedScoresAvailable || isLearningComplete) {
     return { inLearning: false, remainingMinutes: 0, progress: 100 };
   }
   if (learningStartTime === null) {
@@ -469,6 +460,7 @@ function getTrend(code: string, current: number): CountryScore['trend'] {
 
 export function calculateCII(): CountryScore[] {
   const scores: CountryScore[] = [];
+  const focalUrgencies = focalPointDetector.getCountryUrgencyMap();
 
   for (const [code, name] of Object.entries(TIER1_COUNTRIES)) {
     const data = countryDataMap.get(code) || initCountryData();
@@ -487,11 +479,28 @@ export function calculateCII(): CountryScore[] {
     // Hotspot proximity boost - events near strategic locations are more significant
     const hotspotBoost = getHotspotBoost(code);
 
-    // Blend baseline risk with detected events + hotspot boost
+    // News urgency boost - high information score means breaking news
+    // This prevents the score from being diluted when there's major news but no detected signals
+    // Example: "US sends armada to Iran" should elevate Iran even if no military tracked yet
+    const newsUrgencyBoost = components.information >= 70 ? 15
+      : components.information >= 50 ? 10
+      : components.information >= 30 ? 5
+      : 0;
+
+    // Focal point intelligence boost - FocalPointDetector correlates news entities with map signals
+    // If Iran is marked "critical" by focal analysis, boost CII score accordingly
+    const focalUrgency = focalUrgencies.get(code);
+    const focalBoost = focalUrgency === 'critical' ? 20
+      : focalUrgency === 'elevated' ? 10
+      : 0;
+
+    // Blend baseline risk with detected events + all boosts
     // - 40% baseline risk (geopolitical context always matters)
     // - 60% event-based (current detected activity)
     // - Hotspot boost adds up to 30 points for activity near strategic locations
-    const blendedScore = baselineRisk * 0.4 + eventScore * 0.6 + hotspotBoost;
+    // - News urgency boost ensures breaking news elevates score
+    // - Focal boost adds intelligence synthesis (news + signals correlation)
+    const blendedScore = baselineRisk * 0.4 + eventScore * 0.6 + hotspotBoost + newsUrgencyBoost + focalBoost;
 
     // Active conflict zones have a FLOOR score - they're inherently more unstable
     // than peaceful countries regardless of detected events
@@ -541,7 +550,15 @@ export function getCountryScore(code: string): number | null {
 
   const eventScore = components.unrest * 0.4 + components.security * 0.3 + components.information * 0.3;
   const hotspotBoost = getHotspotBoost(code);
-  const blendedScore = baselineRisk * 0.4 + eventScore * 0.6 + hotspotBoost;
+  const newsUrgencyBoost = components.information >= 70 ? 15
+    : components.information >= 50 ? 10
+    : components.information >= 30 ? 5
+    : 0;
+  const focalUrgency = focalPointDetector.getCountryUrgency(code);
+  const focalBoost = focalUrgency === 'critical' ? 20
+    : focalUrgency === 'elevated' ? 10
+    : 0;
+  const blendedScore = baselineRisk * 0.4 + eventScore * 0.6 + hotspotBoost + newsUrgencyBoost + focalBoost;
 
   // Active conflict zones have floor scores
   const conflictFloor: Record<string, number> = {

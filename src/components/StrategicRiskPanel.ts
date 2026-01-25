@@ -17,6 +17,7 @@ import {
   type DataFreshnessSummary,
 } from '@/services/data-freshness';
 import { getLearningProgress } from '@/services/country-instability';
+import { fetchCachedRiskScores } from '@/services/cached-risk-scores';
 
 export class StrategicRiskPanel extends Panel {
   private overview: StrategicRiskOverview | null = null;
@@ -26,6 +27,7 @@ export class StrategicRiskPanel extends Panel {
   private refreshInterval: ReturnType<typeof setInterval> | null = null;
   private unsubscribeFreshness: (() => void) | null = null;
   private onLocationClick?: (lat: number, lon: number) => void;
+  private usedCachedScores = false;
 
   constructor() {
     super({
@@ -74,6 +76,17 @@ export class StrategicRiskPanel extends Panel {
     this.convergenceAlerts = detectConvergence();
     this.overview = calculateStrategicRiskOverview(this.convergenceAlerts);
     this.alerts = getRecentAlerts(24);
+
+    // Try to get cached scores during learning mode
+    const { inLearning } = getLearningProgress();
+    if (inLearning && !this.usedCachedScores) {
+      const cached = await fetchCachedRiskScores();
+      if (cached && cached.strategicRisk) {
+        this.usedCachedScores = true;
+        console.log('[StrategicRiskPanel] Using cached scores from backend');
+      }
+    }
+
     this.render();
   }
 
@@ -201,9 +214,10 @@ export class StrategicRiskPanel extends Panel {
     const scoreDeg = Math.round((score / 100) * 270);
     const sources = dataFreshness.getAllSources();
 
-    // Check for learning mode - takes priority over limited data warning
+    // Check for learning mode - skip if using cached scores
     const { inLearning, remainingMinutes, progress } = getLearningProgress();
-    const warningBanner = inLearning
+    const showLearning = inLearning && !this.usedCachedScores;
+    const warningBanner = showLearning
       ? `<div class="risk-warning-banner risk-status-learning">
           <span class="risk-warning-icon">📊</span>
           <span class="risk-warning-text">Learning Mode - ${remainingMinutes}m until reliable</span>
@@ -277,9 +291,10 @@ export class StrategicRiskPanel extends Panel {
     const level = this.getScoreLevel(score);
     const scoreDeg = Math.round((score / 100) * 270);
 
-    // Check for learning mode
+    // Check for learning mode - skip if using cached scores
     const { inLearning, remainingMinutes, progress } = getLearningProgress();
-    const statusBanner = inLearning
+    const showLearning = inLearning && !this.usedCachedScores;
+    const statusBanner = showLearning
       ? `<div class="risk-status-banner risk-status-learning">
           <span class="risk-status-icon">📊</span>
           <span class="risk-status-text">Learning Mode - ${remainingMinutes}m until reliable</span>
@@ -289,7 +304,7 @@ export class StrategicRiskPanel extends Panel {
         </div>`
       : `<div class="risk-status-banner risk-status-ok">
           <span class="risk-status-icon">✓</span>
-          <span class="risk-status-text">All data sources active</span>
+          <span class="risk-status-text">${this.usedCachedScores ? 'Using cached scores' : 'All data sources active'}</span>
         </div>`;
 
     return `

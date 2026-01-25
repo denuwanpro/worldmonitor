@@ -199,13 +199,28 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ error: 'Missing url parameter' }));
       }
 
-      // Only allow specific blocked domains
+      // Allow domains that block Vercel IPs (must match feeds.ts railwayRss usage)
       const allowedDomains = [
+        // Original
         'rss.cnn.com',
         'www.defensenews.com',
         'layoffs.fyi',
+        // International Organizations
         'news.un.org',
         'www.cisa.gov',
+        'www.iaea.org',
+        'www.who.int',
+        'www.crisisgroup.org',
+        // Middle East & Regional News
+        'english.alarabiya.net',
+        'www.arabnews.com',
+        'www.timesofisrael.com',
+        'www.scmp.com',
+        'kyivindependent.com',
+        'www.themoscowtimes.com',
+        // Africa
+        'feeds.24.com',
+        'feeds.capi24.com',  // News24 redirect destination
       ];
       const parsed = new URL(feedUrl);
       if (!allowedDomains.includes(parsed.hostname)) {
@@ -216,39 +231,84 @@ const server = http.createServer(async (req, res) => {
       console.log('[Relay] RSS request:', feedUrl);
 
       const https = require('https');
-      const request = https.get(feedUrl, {
-        headers: {
-          'Accept': 'application/rss+xml, application/xml, text/xml, */*',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept-Language': 'en-US,en;q=0.9',
-        },
-        timeout: 15000
-      }, (response) => {
-        let data = '';
-        response.on('data', chunk => data += chunk);
-        response.on('end', () => {
-          res.writeHead(response.statusCode, {
-            'Content-Type': 'application/xml',
-            'Cache-Control': 'public, max-age=300'
+      const http = require('http');
+
+      // Helper to fetch with redirect following (max 3 redirects)
+      let responseHandled = false;
+
+      const sendError = (statusCode, message) => {
+        if (responseHandled || res.headersSent) return;
+        responseHandled = true;
+        res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: message }));
+      };
+
+      const fetchWithRedirects = (url, redirectCount = 0) => {
+        if (redirectCount > 3) {
+          return sendError(502, 'Too many redirects');
+        }
+
+        const protocol = url.startsWith('https') ? https : http;
+        const request = protocol.get(url, {
+          headers: {
+            'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+          },
+          timeout: 15000
+        }, (response) => {
+          // Handle redirects
+          if ([301, 302, 303, 307, 308].includes(response.statusCode) && response.headers.location) {
+            const redirectUrl = response.headers.location.startsWith('http')
+              ? response.headers.location
+              : new URL(response.headers.location, url).href;
+            console.log(`[Relay] Following redirect to: ${redirectUrl}`);
+            return fetchWithRedirects(redirectUrl, redirectCount + 1);
+          }
+
+          // Handle gzip/deflate compressed responses from upstream
+          const encoding = response.headers['content-encoding'];
+          let stream = response;
+          if (encoding === 'gzip' || encoding === 'deflate') {
+            const zlib = require('zlib');
+            stream = encoding === 'gzip' ? response.pipe(zlib.createGunzip()) : response.pipe(zlib.createInflate());
+          }
+
+          const chunks = [];
+          stream.on('data', chunk => chunks.push(chunk));
+          stream.on('end', () => {
+            if (responseHandled || res.headersSent) return;
+            responseHandled = true;
+            const data = Buffer.concat(chunks);
+            res.writeHead(response.statusCode, {
+              'Content-Type': 'application/xml',
+              'Cache-Control': 'public, max-age=300'
+            });
+            res.end(data);
           });
-          res.end(data);
+          stream.on('error', (err) => {
+            console.error('[Relay] Decompression error:', err.message);
+            sendError(502, 'Decompression failed: ' + err.message);
+          });
         });
-      });
 
-      request.on('error', (err) => {
-        console.error('[Relay] RSS error:', err.message);
-        res.writeHead(502, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message }));
-      });
+        request.on('error', (err) => {
+          console.error('[Relay] RSS error:', err.message);
+          sendError(502, err.message);
+        });
 
-      request.on('timeout', () => {
-        request.destroy();
-        res.writeHead(504, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Request timeout' }));
-      });
+        request.on('timeout', () => {
+          request.destroy();
+          sendError(504, 'Request timeout');
+        });
+      };
+
+      fetchWithRedirects(feedUrl);
     } catch (err) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: err.message }));
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
     }
   } else if (req.url.startsWith('/opensky')) {
     // Proxy OpenSky API requests with OAuth2 authentication

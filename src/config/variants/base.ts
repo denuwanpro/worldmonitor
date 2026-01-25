@@ -3,7 +3,7 @@ import type { PanelConfig, MapLayers } from '@/types';
 
 // Shared exports (re-exported by all variants)
 export { SECTORS, COMMODITIES, MARKET_SYMBOLS } from '../markets';
-export { UNDERSEA_CABLES, COUNTRY_LABELS } from '../geo';
+export { UNDERSEA_CABLES } from '../geo';
 export { AI_DATA_CENTERS } from '../ai-datacenters';
 
 // API URLs - shared across all variants

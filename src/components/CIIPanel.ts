@@ -1,9 +1,10 @@
 import { Panel } from './Panel';
 import { escapeHtml } from '@/utils/sanitize';
-import { calculateCII, getLearningProgress, type CountryScore } from '@/services/country-instability';
+import { calculateCII, type CountryScore } from '@/services/country-instability';
 
 export class CIIPanel extends Panel {
   private scores: CountryScore[] = [];
+  private focalPointsReady = false;
 
   constructor() {
     super({
@@ -15,14 +16,22 @@ export class CIIPanel extends Panel {
         Score (0-100) per country based on:
         <ul>
           <li>40% baseline geopolitical risk</li>
-          <li>Unrest: protests, fatalities, internet outages</li>
-          <li>Security: military flights/vessels over territory</li>
-          <li>Information: news velocity and alerts</li>
+          <li><strong>U</strong>nrest: protests, fatalities, internet outages</li>
+          <li><strong>S</strong>ecurity: military flights/vessels over territory</li>
+          <li><strong>I</strong>nformation: news velocity and focal point correlation</li>
           <li>Hotspot proximity boost (strategic locations)</li>
         </ul>
-        Event multipliers adjust for media coverage bias.`,
+        <em>U:S:I values show component scores.</em>
+        Focal Point Detection correlates news entities with map signals for accurate scoring.`,
     });
-    this.refresh();
+    // Show loading state until focal points ready
+    this.content.innerHTML = `
+      <div class="cii-awaiting">
+        <div class="cii-awaiting-icon">📊</div>
+        <div class="cii-awaiting-text">Analyzing intelligence...</div>
+        <div class="cii-awaiting-sub">Correlating news with map signals</div>
+      </div>
+    `;
   }
 
   private getLevelColor(level: CountryScore['level']): string {
@@ -51,24 +60,6 @@ export class CIIPanel extends Panel {
     return '<span class="trend-stable">→</span>';
   }
 
-  private renderLearningBanner(): string {
-    const { inLearning, remainingMinutes, progress } = getLearningProgress();
-    if (!inLearning) return '';
-
-    return `
-      <div class="cii-learning-banner">
-        <div class="learning-icon">📊</div>
-        <div class="learning-text">
-          <div class="learning-title">Learning Mode</div>
-          <div class="learning-desc">Calibrating scores (~${remainingMinutes}m remaining)</div>
-        </div>
-        <div class="learning-progress">
-          <div class="learning-bar" style="width: ${progress}%"></div>
-        </div>
-      </div>
-    `;
-  }
-
   private renderCountry(country: CountryScore): string {
     const barWidth = country.score;
     const color = this.getLevelColor(country.level);
@@ -95,25 +86,36 @@ export class CIIPanel extends Panel {
     `;
   }
 
-  public async refresh(): Promise<void> {
+  public async refresh(forceLocal = false): Promise<void> {
+    // Don't show scores until focal points are ready (avoids misleading preliminary data)
+    if (!this.focalPointsReady && !forceLocal) {
+      return; // Keep showing "Analyzing intelligence..." state
+    }
+
+    if (forceLocal) {
+      this.focalPointsReady = true;
+      console.log('[CIIPanel] Focal points ready, calculating scores...');
+    }
+
     this.showLoading();
 
     try {
-      this.scores = calculateCII();
+      // Calculate with focal point data
+      const localScores = calculateCII();
+      const localWithData = localScores.filter(s => s.score > 0).length;
+      this.scores = localScores;
+      console.log(`[CIIPanel] Calculated ${localWithData} countries with focal point intelligence`);
+
       const withData = this.scores.filter(s => s.score > 0);
       this.setCount(withData.length);
 
-      const { inLearning } = getLearningProgress();
-      const learningBanner = this.renderLearningBanner();
-      const learningClass = inLearning ? 'cii-learning' : '';
-
       if (withData.length === 0) {
-        this.content.innerHTML = learningBanner + '<div class="empty-state">Collecting data...</div>';
+        this.content.innerHTML = '<div class="empty-state">No instability signals detected</div>';
         return;
       }
 
       const html = withData.map(s => this.renderCountry(s)).join('');
-      this.content.innerHTML = learningBanner + `<div class="cii-list ${learningClass}">${html}</div>`;
+      this.content.innerHTML = `<div class="cii-list">${html}</div>`;
     } catch (error) {
       console.error('[CIIPanel] Refresh error:', error);
       this.showError('Failed to calculate CII');

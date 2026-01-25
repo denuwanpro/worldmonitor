@@ -1,4 +1,5 @@
 import type { NaturalEvent, NaturalEventCategory } from '@/types';
+import { fetchGDACSEvents, type GDACSEvent } from './gdacs';
 
 interface EonetGeometry {
   magnitudeValue?: number;
@@ -58,7 +59,63 @@ export function getNaturalEventIcon(category: NaturalEventCategory): string {
 // Wildfires older than 48 hours are filtered out (stale data)
 const WILDFIRE_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 
+const GDACS_TO_CATEGORY: Record<string, NaturalEventCategory> = {
+  EQ: 'earthquakes',
+  FL: 'floods',
+  TC: 'severeStorms',
+  VO: 'volcanoes',
+  WF: 'wildfires',
+  DR: 'drought',
+};
+
+function convertGDACSToNaturalEvent(gdacs: GDACSEvent): NaturalEvent {
+  const category = GDACS_TO_CATEGORY[gdacs.eventType] || 'manmade';
+  return {
+    id: gdacs.id,
+    title: `${gdacs.alertLevel === 'Red' ? '🔴 ' : gdacs.alertLevel === 'Orange' ? '🟠 ' : ''}${gdacs.name}`,
+    description: `${gdacs.description}${gdacs.severity ? ` - ${gdacs.severity}` : ''}`,
+    category,
+    categoryTitle: gdacs.description,
+    lat: gdacs.coordinates[1],
+    lon: gdacs.coordinates[0],
+    date: gdacs.fromDate,
+    sourceUrl: gdacs.url,
+    sourceName: 'GDACS',
+    closed: false,
+  };
+}
+
 export async function fetchNaturalEvents(days = 30): Promise<NaturalEvent[]> {
+  const [eonetEvents, gdacsEvents] = await Promise.all([
+    fetchEonetEvents(days),
+    fetchGDACSEvents(),
+  ]);
+
+  console.log(`[NaturalEvents] EONET: ${eonetEvents.length}, GDACS: ${gdacsEvents.length}`);
+  const gdacsConverted = gdacsEvents.map(convertGDACSToNaturalEvent);
+  const seenLocations = new Set<string>();
+  const merged: NaturalEvent[] = [];
+
+  for (const event of gdacsConverted) {
+    const key = `${event.lat.toFixed(1)}-${event.lon.toFixed(1)}-${event.category}`;
+    if (!seenLocations.has(key)) {
+      seenLocations.add(key);
+      merged.push(event);
+    }
+  }
+
+  for (const event of eonetEvents) {
+    const key = `${event.lat.toFixed(1)}-${event.lon.toFixed(1)}-${event.category}`;
+    if (!seenLocations.has(key)) {
+      seenLocations.add(key);
+      merged.push(event);
+    }
+  }
+
+  return merged;
+}
+
+async function fetchEonetEvents(days: number): Promise<NaturalEvent[]> {
   try {
     const url = `${EONET_API_URL}?status=open&days=${days}`;
     const response = await fetch(url);

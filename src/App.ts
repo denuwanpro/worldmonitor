@@ -1,4 +1,4 @@
-import type { NewsItem, Monitor, PanelConfig, MapLayers, RelatedAsset } from '@/types';
+import type { NewsItem, Monitor, PanelConfig, MapLayers, RelatedAsset, InternetOutage, SocialUnrestEvent, MilitaryFlight, MilitaryVessel, MilitaryFlightCluster, MilitaryVesselCluster } from '@/types';
 import {
   FEEDS,
   INTEL_SOURCES,
@@ -12,8 +12,11 @@ import {
   STORAGE_KEYS,
   SITE_VARIANT,
 } from '@/config';
-import { fetchCategoryFeeds, fetchMultipleStocks, fetchCrypto, fetchPredictions, fetchEarthquakes, fetchWeatherAlerts, fetchFredData, fetchInternetOutages, isOutagesConfigured, fetchAisSignals, initAisStream, getAisStatus, disconnectAisStream, isAisConfigured, fetchCableActivity, fetchProtestEvents, getProtestStatus, fetchFlightDelays, fetchMilitaryFlights, fetchMilitaryVessels, initMilitaryVesselStream, isMilitaryVesselTrackingConfigured, initDB, updateBaseline, calculateDeviation, addToSignalHistory, saveSnapshot, cleanOldSnapshots, analysisWorker, fetchPizzIntStatus, fetchGdeltTensions, fetchNaturalEvents, fetchRecentAwards, fetchOilAnalytics, aggregateTechActivity, aggregateGeoActivity } from '@/services';
+import { fetchCategoryFeeds, fetchMultipleStocks, fetchCrypto, fetchPredictions, fetchEarthquakes, fetchWeatherAlerts, fetchFredData, fetchInternetOutages, isOutagesConfigured, fetchAisSignals, initAisStream, getAisStatus, disconnectAisStream, isAisConfigured, fetchCableActivity, fetchProtestEvents, getProtestStatus, fetchFlightDelays, fetchMilitaryFlights, fetchMilitaryVessels, initMilitaryVesselStream, isMilitaryVesselTrackingConfigured, initDB, updateBaseline, calculateDeviation, addToSignalHistory, saveSnapshot, cleanOldSnapshots, analysisWorker, fetchPizzIntStatus, fetchGdeltTensions, fetchNaturalEvents, fetchRecentAwards, fetchOilAnalytics } from '@/services';
+import { mlWorker } from '@/services/ml-worker';
+import { clusterNewsHybrid } from '@/services/clustering';
 import { ingestProtests, ingestFlights, ingestVessels, ingestEarthquakes, detectGeoConvergence, geoConvergenceToSignal } from '@/services/geo-convergence';
+import { signalAggregator } from '@/services/signal-aggregator';
 import { analyzeFlightsForSurge, surgeAlertToSignal, detectForeignMilitaryPresence, foreignPresenceToSignal } from '@/services/military-surge';
 import { ingestProtestsForCII, ingestMilitaryForCII, ingestNewsForCII, ingestOutagesForCII, startLearning, isInLearningMode } from '@/services/country-instability';
 import { dataFreshness, type DataSourceId } from '@/services/data-freshness';
@@ -21,7 +24,8 @@ import { buildMapUrl, debounce, loadFromStorage, parseMapUrlState, saveToStorage
 import { escapeHtml } from '@/utils/sanitize';
 import type { ParsedMapUrlState } from '@/utils';
 import {
-  MapComponent,
+  MapContainer,
+  type MapView,
   NewsPanel,
   MarketPanel,
   HeatmapPanel,
@@ -45,11 +49,8 @@ import {
   IntelligenceGapBadge,
   TechEventsPanel,
   ServiceStatusPanel,
-  TechHubsPanel,
-  TechReadinessPanel,
-  GeoHubsPanel,
+  InsightsPanel,
 } from '@/components';
-import type { MapView } from '@/components';
 import type { SearchResult } from '@/components/SearchModal';
 import { INTEL_HOTSPOTS, CONFLICT_ZONES, MILITARY_BASES, UNDERSEA_CABLES, NUCLEAR_FACILITIES } from '@/config/geo';
 import { PIPELINES } from '@/config/pipelines';
@@ -63,7 +64,7 @@ import type { PredictionMarket, MarketData, ClusteredEvent } from '@/types';
 
 export class App {
   private container: HTMLElement;
-  private map: MapComponent | null = null;
+  private map: MapContainer | null = null;
   private panels: Record<string, Panel> = {};
   private newsPanels: Record<string, NewsPanel> = {};
   private allNews: NewsItem[] = [];
@@ -80,9 +81,6 @@ export class App {
   private latestPredictions: PredictionMarket[] = [];
   private latestMarkets: MarketData[] = [];
   private latestClusters: ClusteredEvent[] = [];
-  private techHubsPanel: TechHubsPanel | null = null;
-  private techReadinessPanel: TechReadinessPanel | null = null;
-  private geoHubsPanel: GeoHubsPanel | null = null;
   private isPlaybackMode = false;
   private initialUrlState: ParsedMapUrlState | null = null;
   private inFlight: Set<string> = new Set();
@@ -118,8 +116,10 @@ export class App {
     // Check if variant changed - reset all settings to variant defaults
     const storedVariant = localStorage.getItem('worldmonitor-variant');
     const currentVariant = SITE_VARIANT;
+    console.log(`[App] Variant check: stored="${storedVariant}", current="${currentVariant}"`);
     if (storedVariant !== currentVariant) {
       // Variant changed - use defaults for new variant, clear old settings
+      console.log('[App] Variant changed - resetting to defaults');
       localStorage.setItem('worldmonitor-variant', currentVariant);
       localStorage.removeItem(STORAGE_KEYS.mapLayers);
       localStorage.removeItem(STORAGE_KEYS.panels);
@@ -132,6 +132,34 @@ export class App {
         STORAGE_KEYS.panels,
         DEFAULT_PANELS
       );
+      console.log('[App] Loaded panel settings from storage:', Object.entries(this.panelSettings).filter(([_, v]) => !v.enabled).map(([k]) => k));
+
+      // One-time migration: reorder panels for existing users (v1.8 panel layout)
+      // Puts live-news, insights, cii, strategic-risk at the top
+      const PANEL_ORDER_MIGRATION_KEY = 'worldmonitor-panel-order-v1.8';
+      if (!localStorage.getItem(PANEL_ORDER_MIGRATION_KEY)) {
+        const savedOrder = localStorage.getItem('panel-order');
+        if (savedOrder) {
+          try {
+            const order: string[] = JSON.parse(savedOrder);
+            // Priority panels that should be at the top (after live-news which is handled separately)
+            const priorityPanels = ['insights', 'cii', 'strategic-risk'];
+            // Remove priority panels from their current positions
+            const filtered = order.filter(k => !priorityPanels.includes(k) && k !== 'live-news');
+            // Find live-news position (should be first, but just in case)
+            const liveNewsIdx = order.indexOf('live-news');
+            // Build new order: live-news first, then priority panels, then rest
+            const newOrder = liveNewsIdx !== -1 ? ['live-news'] : [];
+            newOrder.push(...priorityPanels.filter(p => order.includes(p)));
+            newOrder.push(...filtered);
+            localStorage.setItem('panel-order', JSON.stringify(newOrder));
+            console.log('[App] Migrated panel order to v1.8 layout');
+          } catch {
+            // Invalid saved order, will use defaults
+          }
+        }
+        localStorage.setItem(PANEL_ORDER_MIGRATION_KEY, 'done');
+      }
     }
 
     this.initialUrlState = parseMapUrlState(window.location.search, this.mapLayers);
@@ -151,6 +179,9 @@ export class App {
 
   public async init(): Promise<void> {
     await initDB();
+
+    // Initialize ML worker (desktop only - automatically disabled on mobile)
+    await mlWorker.init();
 
     // Check AIS configuration before init
     if (!isAisConfigured()) {
@@ -657,13 +688,15 @@ export class App {
   private updateSearchIndex(): void {
     if (!this.searchModal) return;
 
-    // Update news sources (use link as unique id)
-    this.searchModal.registerSource('news', this.allNews.slice(0, 200).map(n => ({
+    // Update news sources (use link as unique id) - index up to 500 items for better search coverage
+    const newsItems = this.allNews.slice(0, 500).map(n => ({
       id: n.link,
       title: n.title,
       subtitle: n.source,
       data: n,
-    })));
+    }));
+    console.log(`[Search] Indexing ${newsItems.length} news items (allNews total: ${this.allNews.length})`);
+    this.searchModal.registerSource('news', newsItems);
 
     // Update predictions if available
     if (this.latestPredictions.length > 0) {
@@ -784,19 +817,18 @@ export class App {
             <span class="status-dot"></span>
             <span>LIVE</span>
           </div>
-        </div>
-        <div class="header-center">
-          <label class="focus-label">FOCUS</label>
-          <select class="focus-select" id="focusSelect">
-            <option value="global">GLOBAL</option>
-            <option value="america">AMERICA</option>
-            <option value="eu">EUROPE</option>
-            <option value="mena">MENA</option>
-            <option value="asia">ASIA</option>
-            <option value="africa">AFRICA</option>
-            <option value="latam">LAT AM</option>
-            <option value="oceania">OCEANIA</option>
-          </select>
+          <div class="region-selector">
+            <select id="regionSelect" class="region-select">
+              <option value="global">Global</option>
+              <option value="america">Americas</option>
+              <option value="mena">MENA</option>
+              <option value="eu">Europe</option>
+              <option value="asia">Asia</option>
+              <option value="latam">Latin America</option>
+              <option value="africa">Africa</option>
+              <option value="oceania">Oceania</option>
+            </select>
+          </div>
         </div>
         <div class="header-right">
           <button class="search-btn" id="searchBtn"><kbd>⌘K</kbd> Search</button>
@@ -922,8 +954,9 @@ export class App {
 
     // Initialize map in the map section
     // Default to MENA view on mobile for better focus
+    // Uses deck.gl (WebGL) on desktop, falls back to D3/SVG on mobile
     const mapContainer = document.getElementById('mapContainer') as HTMLElement;
-    this.map = new MapComponent(mapContainer, {
+    this.map = new MapContainer(mapContainer, {
       zoom: this.isMobile ? 2.5 : 1.0,
       pan: { x: 0, y: 0 },  // Centered view to show full world
       view: this.isMobile ? 'mena' : 'global',
@@ -1124,33 +1157,9 @@ export class App {
     const serviceStatusPanel = new ServiceStatusPanel();
     this.panels['service-status'] = serviceStatusPanel;
 
-    // Tech Hubs Panel - shows active tech hub activity (all variants)
-    this.techHubsPanel = new TechHubsPanel();
-    this.panels['tech-hubs'] = this.techHubsPanel;
-
-    // Set up hub click handler to zoom map to hub location
-    this.techHubsPanel.setOnHubClick((hub) => {
-      this.map?.setCenter(hub.lat, hub.lon);
-      this.map?.flashLocation(hub.lat, hub.lon);
-    });
-
-    // Geo Hubs Panel - shows geopolitical activity hotspots (full variant only)
-    if (SITE_VARIANT === 'full') {
-      this.geoHubsPanel = new GeoHubsPanel();
-      this.panels['geo-hubs'] = this.geoHubsPanel;
-
-      this.geoHubsPanel.setOnHubClick((hub) => {
-        this.map?.setCenter(hub.lat, hub.lon);
-        this.map?.flashLocation(hub.lat, hub.lon);
-      });
-    }
-
-    // Tech Readiness Panel - World Bank tech indicators (tech variant only)
-    if (SITE_VARIANT === 'tech') {
-      this.techReadinessPanel = new TechReadinessPanel();
-      this.panels['tech-readiness'] = this.techReadinessPanel;
-      this.techReadinessPanel.refresh();
-    }
+    // AI Insights Panel (desktop only - hides itself on mobile)
+    const insightsPanel = new InsightsPanel();
+    this.panels['insights'] = insightsPanel;
 
     // Add panels to grid in saved order
     // Use DEFAULT_PANELS keys for variant-aware panel order
@@ -1193,11 +1202,6 @@ export class App {
     this.applyPanelSettings();
     this.applyInitialUrlState();
 
-    // Set correct view button state (especially for mobile defaults)
-    const currentView = this.map?.getState().view;
-    if (currentView) {
-      this.setActiveFocusRegion(currentView);
-    }
   }
 
   private applyInitialUrlState(): void {
@@ -1207,7 +1211,6 @@ export class App {
 
     if (view) {
       this.map.setView(view);
-      this.setActiveFocusRegion(view);
     }
 
     if (timeRange) {
@@ -1232,6 +1235,13 @@ export class App {
       if (lat !== undefined && lon !== undefined && zoom !== undefined && zoom > 2) {
         this.map.setCenter(lat, lon);
       }
+    }
+
+    // Sync header region selector with initial view
+    const regionSelect = document.getElementById('regionSelect') as HTMLSelectElement;
+    const currentView = this.map.getState().view;
+    if (regionSelect && currentView) {
+      regionSelect.value = currentView;
     }
   }
 
@@ -1303,6 +1313,17 @@ export class App {
     el.dataset.panel = key;
 
     el.addEventListener('dragstart', (e) => {
+      const target = e.target as HTMLElement;
+      // Don't start drag if panel is being resized
+      if (el.dataset.resizing === 'true') {
+        e.preventDefault();
+        return;
+      }
+      // Don't start drag if target is the resize handle
+      if (target.classList.contains('panel-resize-handle') || target.closest('.panel-resize-handle')) {
+        e.preventDefault();
+        return;
+      }
       el.classList.add('dragging');
       e.dataTransfer?.setData('text/plain', key);
     });
@@ -1335,13 +1356,6 @@ export class App {
   }
 
   private setupEventListeners(): void {
-    // Focus region selector
-    const focusSelect = document.getElementById('focusSelect') as HTMLSelectElement;
-    focusSelect?.addEventListener('change', () => {
-      const view = focusSelect.value as MapView;
-      this.map?.setView(view);
-    });
-
     // Search button
     document.getElementById('searchBtn')?.addEventListener('click', () => {
       this.updateSearchIndex();
@@ -1389,6 +1403,12 @@ export class App {
     };
     document.addEventListener('fullscreenchange', this.boundFullscreenHandler);
 
+    // Region selector
+    const regionSelect = document.getElementById('regionSelect') as HTMLSelectElement;
+    regionSelect?.addEventListener('change', () => {
+      this.map?.setView(regionSelect.value as MapView);
+    });
+
     // Window resize
     this.boundResizeHandler = () => {
       this.map?.render();
@@ -1401,15 +1421,21 @@ export class App {
     // Map pin toggle
     this.setupMapPin();
 
-    // Pause animations when tab is hidden
+    // Pause animations when tab is hidden, unload ML models to free memory
     this.boundVisibilityHandler = () => {
       document.body.classList.toggle('animations-paused', document.hidden);
-      // Also reset idle timer when tab becomes visible
-      if (!document.hidden) {
+      if (document.hidden) {
+        mlWorker.unloadOptionalModels();
+      } else {
         this.resetIdleTimer();
       }
     };
     document.addEventListener('visibilitychange', this.boundVisibilityHandler);
+
+    // Refresh CII when focal points are ready (ensures focal point urgency is factored in)
+    window.addEventListener('focal-points-ready', () => {
+      (this.panels['cii'] as CIIPanel)?.refresh(true); // forceLocal to use focal point data
+    });
 
     // Idle detection - pause animations after 2 minutes of inactivity
     this.setupIdleDetection();
@@ -1455,9 +1481,16 @@ export class App {
       history.replaceState(null, '', shareUrl);
     }, 250);
 
-    this.map.onStateChanged((state) => {
+    this.map.onStateChanged(() => {
       update();
-      this.setActiveFocusRegion(state.view);
+      // Sync header region selector with map view
+      const regionSelect = document.getElementById('regionSelect') as HTMLSelectElement;
+      if (regionSelect && this.map) {
+        const state = this.map.getState();
+        if (regionSelect.value !== state.view) {
+          regionSelect.value = state.view;
+        }
+      }
     });
     update();
   }
@@ -1502,13 +1535,6 @@ export class App {
     }, 1500);
   }
 
-  private setActiveFocusRegion(view: MapView): void {
-    const focusSelect = document.getElementById('focusSelect') as HTMLSelectElement;
-    if (focusSelect) {
-      focusSelect.value = view;
-    }
-  }
-
   private toggleFullscreen(): void {
     if (document.fullscreenElement) {
       document.exitFullscreen();
@@ -1544,7 +1570,7 @@ export class App {
     document.addEventListener('mousemove', (e) => {
       if (!isResizing) return;
       const deltaY = e.clientY - startY;
-      const newHeight = Math.max(400, Math.min(startHeight + deltaY, window.innerHeight * 0.85));
+      const newHeight = Math.max(400, Math.min(startHeight + deltaY, window.innerHeight - 60));
       mapSection.style.height = `${newHeight}px`;
       this.map?.render();
     });
@@ -1739,17 +1765,19 @@ export class App {
       { name: 'fred', task: runGuarded('fred', () => this.loadFredData()) },
       { name: 'oil', task: runGuarded('oil', () => this.loadOilAnalytics()) },
       { name: 'spending', task: runGuarded('spending', () => this.loadGovernmentSpending()) },
+      // ALWAYS load intelligence signals for CII calculation (protests, military, outages)
+      // This ensures CII scores are accurate even when map layers are disabled
+      { name: 'intelligence', task: runGuarded('intelligence', () => this.loadIntelligenceSignals()) },
     ];
 
-    // Conditionally load based on layer settings
+    // Conditionally load non-intelligence layers
+    // NOTE: outages, protests, military are handled by loadIntelligenceSignals() above
+    // They update the map when layers are enabled, so no duplicate tasks needed here
     if (this.mapLayers.natural) tasks.push({ name: 'natural', task: runGuarded('natural', () => this.loadNatural()) });
     if (this.mapLayers.weather) tasks.push({ name: 'weather', task: runGuarded('weather', () => this.loadWeatherAlerts()) });
-    if (this.mapLayers.outages) tasks.push({ name: 'outages', task: runGuarded('outages', () => this.loadOutages()) });
     if (this.mapLayers.ais) tasks.push({ name: 'ais', task: runGuarded('ais', () => this.loadAisSignals()) });
     if (this.mapLayers.cables) tasks.push({ name: 'cables', task: runGuarded('cables', () => this.loadCableActivity()) });
-    if (this.mapLayers.protests) tasks.push({ name: 'protests', task: runGuarded('protests', () => this.loadProtests()) });
     if (this.mapLayers.flights) tasks.push({ name: 'flights', task: runGuarded('flights', () => this.loadFlightDelays()) });
-    if (this.mapLayers.military) tasks.push({ name: 'military', task: runGuarded('military', () => this.loadMilitary()) });
     if (this.mapLayers.techEvents || SITE_VARIANT === 'tech') tasks.push({ name: 'techEvents', task: runGuarded('techEvents', () => this.loadTechEvents()) });
 
     // Use allSettled to ensure all tasks complete and search index always updates
@@ -1980,7 +2008,6 @@ export class App {
       { key: 'dev', feeds: FEEDS.dev },
       { key: 'github', feeds: FEEDS.github },
       { key: 'ipo', feeds: FEEDS.ipo },
-      { key: 'podcasts', feeds: FEEDS.podcasts },
     ];
     // Filter to only categories that have feeds defined
     const categories = allCategories.filter(c => c.feeds && c.feeds.length > 0);
@@ -2032,25 +2059,19 @@ export class App {
     // Update monitors
     this.updateMonitorResults();
 
-    // Update clusters for correlation analysis (off main thread via Web Worker)
+    // Update clusters for correlation analysis (hybrid: semantic + Jaccard when ML available)
     try {
-      this.latestClusters = await analysisWorker.clusterNews(this.allNews);
+      this.latestClusters = mlWorker.isAvailable
+        ? await clusterNewsHybrid(this.allNews)
+        : await analysisWorker.clusterNews(this.allNews);
 
-      // Aggregate tech hub activity from news clusters (all variants)
-      if (this.latestClusters.length > 0) {
-        const techActivity = aggregateTechActivity(this.latestClusters);
-        this.map?.setTechActivity(techActivity);
-        this.techHubsPanel?.setActivities(techActivity);
-
-        // Aggregate geopolitical hub activity (full variant only)
-        if (SITE_VARIANT === 'full') {
-          const geoActivity = aggregateGeoActivity(this.latestClusters);
-          this.map?.setGeoActivity(geoActivity);
-          this.geoHubsPanel?.setActivities(geoActivity);
-        }
+      // Update AI Insights panel with new clusters (if ML available)
+      if (mlWorker.isAvailable && this.latestClusters.length > 0) {
+        const insightsPanel = this.panels['insights'] as InsightsPanel | undefined;
+        insightsPanel?.updateInsights(this.latestClusters);
       }
     } catch (error) {
-      console.error('[App] Worker clustering failed, clusters unchanged:', error);
+      console.error('[App] Clustering failed, clusters unchanged:', error);
     }
   }
 
@@ -2242,12 +2263,146 @@ export class App {
     }
   }
 
+  // Cache for intelligence data - allows CII to work even when layers are disabled
+  private intelligenceCache: {
+    outages?: InternetOutage[];
+    protests?: { events: SocialUnrestEvent[]; sources: { acled: number; gdelt: number } };
+    military?: { flights: MilitaryFlight[]; flightClusters: MilitaryFlightCluster[]; vessels: MilitaryVessel[]; vesselClusters: MilitaryVesselCluster[] };
+  } = {};
+
+  /**
+   * Load intelligence-critical signals for CII/focal point calculation
+   * This runs ALWAYS, regardless of layer visibility
+   * Map rendering is separate and still gated by layer visibility
+   */
+  private async loadIntelligenceSignals(): Promise<void> {
+    const tasks: Promise<void>[] = [];
+
+    // Always fetch outages for CII (internet blackouts = major instability signal)
+    tasks.push((async () => {
+      try {
+        const outages = await fetchInternetOutages();
+        this.intelligenceCache.outages = outages;
+        ingestOutagesForCII(outages);
+        signalAggregator.ingestOutages(outages);
+        dataFreshness.recordUpdate('outages', outages.length);
+        // Update map only if layer is visible
+        if (this.mapLayers.outages) {
+          this.map?.setOutages(outages);
+          this.map?.setLayerReady('outages', outages.length > 0);
+          this.statusPanel?.updateFeed('NetBlocks', { status: 'ok', itemCount: outages.length });
+        }
+      } catch (error) {
+        console.error('[Intelligence] Outages fetch failed:', error);
+        dataFreshness.recordError('outages', String(error));
+      }
+    })());
+
+    // Always fetch protests for CII (unrest = core instability metric)
+    tasks.push((async () => {
+      try {
+        const protestData = await fetchProtestEvents();
+        this.intelligenceCache.protests = protestData;
+        ingestProtests(protestData.events);
+        ingestProtestsForCII(protestData.events);
+        signalAggregator.ingestProtests(protestData.events);
+        const protestCount = protestData.sources.acled + protestData.sources.gdelt;
+        if (protestCount > 0) dataFreshness.recordUpdate('acled', protestCount);
+        if (protestData.sources.gdelt > 0) dataFreshness.recordUpdate('gdelt', protestData.sources.gdelt);
+        // Update map only if layer is visible
+        if (this.mapLayers.protests) {
+          this.map?.setProtests(protestData.events);
+          this.map?.setLayerReady('protests', protestData.events.length > 0);
+          const status = getProtestStatus();
+          this.statusPanel?.updateFeed('Protests', {
+            status: 'ok',
+            itemCount: protestData.events.length,
+            errorMessage: status.acledConfigured === false ? 'ACLED not configured - using GDELT only' : undefined,
+          });
+        }
+      } catch (error) {
+        console.error('[Intelligence] Protests fetch failed:', error);
+        dataFreshness.recordError('acled', String(error));
+      }
+    })());
+
+    // Always fetch military for CII (security = core instability metric)
+    tasks.push((async () => {
+      try {
+        if (isMilitaryVesselTrackingConfigured()) {
+          initMilitaryVesselStream();
+        }
+        const [flightData, vesselData] = await Promise.all([
+          fetchMilitaryFlights(),
+          fetchMilitaryVessels(),
+        ]);
+        this.intelligenceCache.military = {
+          flights: flightData.flights,
+          flightClusters: flightData.clusters,
+          vessels: vesselData.vessels,
+          vesselClusters: vesselData.clusters,
+        };
+        ingestFlights(flightData.flights);
+        ingestVessels(vesselData.vessels);
+        ingestMilitaryForCII(flightData.flights, vesselData.vessels);
+        signalAggregator.ingestFlights(flightData.flights);
+        signalAggregator.ingestVessels(vesselData.vessels);
+        dataFreshness.recordUpdate('opensky', flightData.flights.length);
+        // Update map only if layer is visible
+        if (this.mapLayers.military) {
+          this.map?.setMilitaryFlights(flightData.flights, flightData.clusters);
+          this.map?.setMilitaryVessels(vesselData.vessels, vesselData.clusters);
+          this.map?.updateMilitaryForEscalation(flightData.flights, vesselData.vessels);
+          const militaryCount = flightData.flights.length + vesselData.vessels.length;
+          this.statusPanel?.updateFeed('Military', {
+            status: militaryCount > 0 ? 'ok' : 'warning',
+            itemCount: militaryCount,
+          });
+        }
+        // Detect military airlift surges and foreign presence (suppress during learning mode)
+        if (!isInLearningMode()) {
+          const surgeAlerts = analyzeFlightsForSurge(flightData.flights);
+          if (surgeAlerts.length > 0) {
+            const surgeSignals = surgeAlerts.map(surgeAlertToSignal);
+            addToSignalHistory(surgeSignals);
+            this.signalModal?.show(surgeSignals);
+          }
+          const foreignAlerts = detectForeignMilitaryPresence(flightData.flights);
+          if (foreignAlerts.length > 0) {
+            const foreignSignals = foreignAlerts.map(foreignPresenceToSignal);
+            addToSignalHistory(foreignSignals);
+            this.signalModal?.show(foreignSignals);
+          }
+        }
+      } catch (error) {
+        console.error('[Intelligence] Military fetch failed:', error);
+        dataFreshness.recordError('opensky', String(error));
+      }
+    })());
+
+    await Promise.allSettled(tasks);
+
+    // Now trigger CII refresh with all intelligence data
+    (this.panels['cii'] as CIIPanel)?.refresh();
+    console.log('[Intelligence] All signals loaded for CII calculation');
+  }
+
   private async loadOutages(): Promise<void> {
+    // Use cached data if available
+    if (this.intelligenceCache.outages) {
+      const outages = this.intelligenceCache.outages;
+      this.map?.setOutages(outages);
+      this.map?.setLayerReady('outages', outages.length > 0);
+      this.statusPanel?.updateFeed('NetBlocks', { status: 'ok', itemCount: outages.length });
+      return;
+    }
     try {
       const outages = await fetchInternetOutages();
+      this.intelligenceCache.outages = outages;
       this.map?.setOutages(outages);
       this.map?.setLayerReady('outages', outages.length > 0);
       ingestOutagesForCII(outages);
+      signalAggregator.ingestOutages(outages);
       this.statusPanel?.updateFeed('NetBlocks', { status: 'ok', itemCount: outages.length });
       dataFreshness.recordUpdate('outages', outages.length);
     } catch (error) {
@@ -2263,6 +2418,7 @@ export class App {
       const aisStatus = getAisStatus();
       console.log('[Ships] Events:', { disruptions: disruptions.length, density: density.length, vessels: aisStatus.vessels });
       this.map?.setAisData(disruptions, density);
+      signalAggregator.ingestAisDisruptions(disruptions);
 
       const hasData = disruptions.length > 0 || density.length > 0;
       this.map?.setLayerReady('ais', hasData);
@@ -2330,32 +2486,43 @@ export class App {
   }
 
   private async loadProtests(): Promise<void> {
-    try {
-      const protestData = await fetchProtestEvents();
+    // Use cached data if available (from loadIntelligenceSignals)
+    if (this.intelligenceCache.protests) {
+      const protestData = this.intelligenceCache.protests;
       this.map?.setProtests(protestData.events);
       this.map?.setLayerReady('protests', protestData.events.length > 0);
-      ingestProtests(protestData.events);
-      ingestProtestsForCII(protestData.events);
-
-      // Record data freshness AFTER CII ingestion to avoid race conditions
-      // For 'acled' source: count GDELT protests too since GDELT serves as fallback
-      const protestCount = protestData.sources.acled + protestData.sources.gdelt;
-      if (protestCount > 0) {
-        dataFreshness.recordUpdate('acled', protestCount);
-      }
-      if (protestData.sources.gdelt > 0) {
-        dataFreshness.recordUpdate('gdelt', protestData.sources.gdelt);
-      }
-
-      (this.panels['cii'] as CIIPanel)?.refresh();
       const status = getProtestStatus();
-
       this.statusPanel?.updateFeed('Protests', {
         status: 'ok',
         itemCount: protestData.events.length,
         errorMessage: status.acledConfigured === false ? 'ACLED not configured - using GDELT only' : undefined,
       });
-
+      if (status.acledConfigured === true) {
+        this.statusPanel?.updateApi('ACLED', { status: 'ok' });
+      } else if (status.acledConfigured === null) {
+        this.statusPanel?.updateApi('ACLED', { status: 'warning' });
+      }
+      this.statusPanel?.updateApi('GDELT', { status: 'ok' });
+      return;
+    }
+    try {
+      const protestData = await fetchProtestEvents();
+      this.intelligenceCache.protests = protestData;
+      this.map?.setProtests(protestData.events);
+      this.map?.setLayerReady('protests', protestData.events.length > 0);
+      ingestProtests(protestData.events);
+      ingestProtestsForCII(protestData.events);
+      signalAggregator.ingestProtests(protestData.events);
+      const protestCount = protestData.sources.acled + protestData.sources.gdelt;
+      if (protestCount > 0) dataFreshness.recordUpdate('acled', protestCount);
+      if (protestData.sources.gdelt > 0) dataFreshness.recordUpdate('gdelt', protestData.sources.gdelt);
+      (this.panels['cii'] as CIIPanel)?.refresh();
+      const status = getProtestStatus();
+      this.statusPanel?.updateFeed('Protests', {
+        status: 'ok',
+        itemCount: protestData.events.length,
+        errorMessage: status.acledConfigured === false ? 'ACLED not configured - using GDELT only' : undefined,
+      });
       if (status.acledConfigured === true) {
         this.statusPanel?.updateApi('ACLED', { status: 'ok' });
       } else if (status.acledConfigured === null) {
@@ -2388,27 +2555,46 @@ export class App {
   }
 
   private async loadMilitary(): Promise<void> {
+    // Use cached data if available (from loadIntelligenceSignals)
+    if (this.intelligenceCache.military) {
+      const { flights, flightClusters, vessels, vesselClusters } = this.intelligenceCache.military;
+      this.map?.setMilitaryFlights(flights, flightClusters);
+      this.map?.setMilitaryVessels(vessels, vesselClusters);
+      this.map?.updateMilitaryForEscalation(flights, vessels);
+      const hasData = flights.length > 0 || vessels.length > 0;
+      this.map?.setLayerReady('military', hasData);
+      const militaryCount = flights.length + vessels.length;
+      this.statusPanel?.updateFeed('Military', {
+        status: militaryCount > 0 ? 'ok' : 'warning',
+        itemCount: militaryCount,
+        errorMessage: militaryCount === 0 ? 'No military activity in view' : undefined,
+      });
+      this.statusPanel?.updateApi('OpenSky', { status: 'ok' });
+      return;
+    }
     try {
-      // Initialize vessel stream if not already running
       if (isMilitaryVesselTrackingConfigured()) {
         initMilitaryVesselStream();
       }
-
-      // Load both flights and vessels in parallel
       const [flightData, vesselData] = await Promise.all([
         fetchMilitaryFlights(),
         fetchMilitaryVessels(),
       ]);
-
+      this.intelligenceCache.military = {
+        flights: flightData.flights,
+        flightClusters: flightData.clusters,
+        vessels: vesselData.vessels,
+        vesselClusters: vesselData.clusters,
+      };
       this.map?.setMilitaryFlights(flightData.flights, flightData.clusters);
       this.map?.setMilitaryVessels(vesselData.vessels, vesselData.clusters);
       ingestFlights(flightData.flights);
       ingestVessels(vesselData.vessels);
       ingestMilitaryForCII(flightData.flights, vesselData.vessels);
+      signalAggregator.ingestFlights(flightData.flights);
+      signalAggregator.ingestVessels(vesselData.vessels);
       this.map?.updateMilitaryForEscalation(flightData.flights, vesselData.vessels);
       (this.panels['cii'] as CIIPanel)?.refresh();
-
-      // Detect military airlift surges and foreign presence (suppress during learning mode)
       if (!isInLearningMode()) {
         const surgeAlerts = analyzeFlightsForSurge(flightData.flights);
         if (surgeAlerts.length > 0) {
@@ -2416,8 +2602,6 @@ export class App {
           addToSignalHistory(surgeSignals);
           this.signalModal?.show(surgeSignals);
         }
-
-        // Detect foreign military concentration in sensitive regions (immediate, no baseline needed)
         const foreignAlerts = detectForeignMilitaryPresence(flightData.flights);
         if (foreignAlerts.length > 0) {
           const foreignSignals = foreignAlerts.map(foreignPresenceToSignal);
@@ -2425,17 +2609,15 @@ export class App {
           this.signalModal?.show(foreignSignals);
         }
       }
-
       const hasData = flightData.flights.length > 0 || vesselData.vessels.length > 0;
       this.map?.setLayerReady('military', hasData);
-
       const militaryCount = flightData.flights.length + vesselData.vessels.length;
       this.statusPanel?.updateFeed('Military', {
         status: militaryCount > 0 ? 'ok' : 'warning',
         itemCount: militaryCount,
         errorMessage: militaryCount === 0 ? 'No military activity in view' : undefined,
       });
-      this.statusPanel?.updateApi('OpenSky', { status: 'ok' }); // API worked, just no data in view
+      this.statusPanel?.updateApi('OpenSky', { status: 'ok' });
       dataFreshness.recordUpdate('opensky', flightData.flights.length);
     } catch (error) {
       this.map?.setLayerReady('military', false);
@@ -2476,6 +2658,7 @@ export class App {
       economicPanel?.setErrorState(false);
       economicPanel?.update(data);
       this.statusPanel?.updateApi('FRED', { status: 'ok' });
+      dataFreshness.recordUpdate('economic', data.length);
     } catch {
       this.statusPanel?.updateApi('FRED', { status: 'error' });
       economicPanel?.setErrorState(true, 'Failed to load data');
@@ -2510,9 +2693,11 @@ export class App {
 
   private async runCorrelationAnalysis(): Promise<void> {
     try {
-      // Ensure we have clusters (compute via worker if needed)
+      // Ensure we have clusters (hybrid: semantic + Jaccard when ML available)
       if (this.latestClusters.length === 0 && this.allNews.length > 0) {
-        this.latestClusters = await analysisWorker.clusterNews(this.allNews);
+        this.latestClusters = mlWorker.isAvailable
+          ? await clusterNewsHybrid(this.allNews)
+          : await analysisWorker.clusterNews(this.allNews);
       }
 
       // Ingest news clusters for CII
@@ -2607,11 +2792,18 @@ export class App {
     this.scheduleRefresh('fred', () => this.loadFredData(), 30 * 60 * 1000);
     this.scheduleRefresh('oil', () => this.loadOilAnalytics(), 30 * 60 * 1000);
     this.scheduleRefresh('spending', () => this.loadGovernmentSpending(), 60 * 60 * 1000);
-    this.scheduleRefresh('outages', () => this.loadOutages(), 60 * 60 * 1000, () => this.mapLayers.outages);
+
+    // ALWAYS refresh intelligence signals for CII (no layer condition)
+    // This handles outages, protests, military - updates map when layers enabled
+    this.scheduleRefresh('intelligence', () => {
+      this.intelligenceCache = {}; // Clear cache to force fresh fetch
+      return this.loadIntelligenceSignals();
+    }, 5 * 60 * 1000);
+
+    // Non-intelligence layer refreshes only
+    // NOTE: outages, protests, military are refreshed by intelligence schedule above
     this.scheduleRefresh('ais', () => this.loadAisSignals(), REFRESH_INTERVALS.ais, () => this.mapLayers.ais);
     this.scheduleRefresh('cables', () => this.loadCableActivity(), 30 * 60 * 1000, () => this.mapLayers.cables);
-    this.scheduleRefresh('protests', () => this.loadProtests(), 15 * 60 * 1000, () => this.mapLayers.protests);
     this.scheduleRefresh('flights', () => this.loadFlightDelays(), 10 * 60 * 1000, () => this.mapLayers.flights);
-    this.scheduleRefresh('military', () => this.loadMilitary(), 5 * 60 * 1000, () => this.mapLayers.military);
   }
 }

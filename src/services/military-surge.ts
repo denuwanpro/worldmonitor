@@ -1,6 +1,7 @@
 import type { MilitaryFlight, MilitaryOperator } from '@/types';
 import type { SignalType } from '@/utils/analysis-constants';
 import { MILITARY_BASES_EXPANDED } from '@/config/bases-expanded';
+import { focalPointDetector } from './focal-point-detector';
 
 // Foreign military concentration detection - immediate alerts, no baseline needed
 interface GeoRegion {
@@ -460,6 +461,35 @@ export function detectForeignMilitaryPresence(flights: MilitaryFlight[]): Foreig
   return newAlerts;
 }
 
+// Map operator country names to ISO codes for focal point lookup
+const COUNTRY_TO_ISO: Record<string, string> = {
+  'USA': 'US',
+  'Russia': 'RU',
+  'China': 'CN',
+  'Israel': 'IL',
+  'Iran': 'IR',
+  'UK': 'GB',
+  'France': 'FR',
+  'Germany': 'DE',
+  'Taiwan': 'TW',
+  'Ukraine': 'UA',
+  'Saudi Arabia': 'SA',
+};
+
+// Map regions to affected countries (for news correlation)
+const REGION_AFFECTED_COUNTRIES: Record<string, string[]> = {
+  'persian-gulf': ['IR', 'SA'],
+  'strait-hormuz': ['IR'],
+  'iran-border': ['IR', 'IL'],
+  'baltics': ['RU', 'UA'],
+  'poland-border': ['RU', 'UA'],
+  'black-sea': ['RU', 'UA'],
+  'taiwan-strait': ['TW', 'CN'],
+  'south-china-sea': ['CN', 'TW'],
+  'east-med': ['IL', 'IR'],
+  'alaska-adiz': ['RU'],
+};
+
 export function foreignPresenceToSignal(alert: ForeignPresenceAlert): {
   id: string;
   type: SignalType;
@@ -505,14 +535,47 @@ export function foreignPresenceToSignal(alert: ForeignPresenceAlert): {
 
   const confidence = Math.min(0.95, 0.7 + alert.aircraftCount * 0.05);
 
-  const metadata = {
+  // Gather relevant countries for focal point lookup
+  const relevantCountries: string[] = [];
+  const operatorISO = COUNTRY_TO_ISO[alert.operatorCountry];
+  if (operatorISO) relevantCountries.push(operatorISO);
+
+  const affectedCountries = REGION_AFFECTED_COUNTRIES[alert.region.id] || [];
+  for (const iso of affectedCountries) {
+    if (!relevantCountries.includes(iso)) {
+      relevantCountries.push(iso);
+    }
+  }
+
+  // Get news correlation from focal point detector
+  const newsContext = focalPointDetector.getNewsCorrelationContext(relevantCountries);
+
+  // Build enhanced description with news correlation
+  let description = `${alert.aircraftCount} ${alert.operatorCountry} aircraft detected in ${alert.region.name}. ` +
+    `${aircraftList}. Callsigns: ${callsigns.slice(0, 4).join(', ')}${callsigns.length > 4 ? '...' : ''}`;
+
+  // Check for critical focal points in affected region
+  const focalPointContexts: string[] = [];
+  for (const iso of relevantCountries) {
+    const fp = focalPointDetector.getFocalPointForCountry(iso);
+    if (fp && fp.newsMentions > 0) {
+      focalPointContexts.push(`${fp.displayName}: ${fp.newsMentions} news mentions (${fp.urgency})`);
+    }
+  }
+
+  const metadata: Record<string, unknown> = {
     operator: alert.operator,
     operatorCountry: alert.operatorCountry,
     regionId: alert.region.id,
     regionName: alert.region.name,
+    lat: alert.region.lat,
+    lon: alert.region.lon,
     aircraftCount: alert.aircraftCount,
     aircraftTypes: Object.fromEntries(aircraftTypes),
     callsigns,
+    relevantCountries,
+    newsCorrelation: newsContext,
+    focalPointContext: focalPointContexts.length > 0 ? focalPointContexts : null,
   };
 
   return {
@@ -520,8 +583,7 @@ export function foreignPresenceToSignal(alert: ForeignPresenceAlert): {
     type: 'military_surge',
     source: 'Military Flight Tracking',
     title: `🚨 ${alert.operatorCountry} Military in ${alert.region.name}`,
-    description: `${alert.aircraftCount} ${alert.operatorCountry} aircraft detected in ${alert.region.name}. ` +
-      `${aircraftList}. Callsigns: ${callsigns.slice(0, 4).join(', ')}${callsigns.length > 4 ? '...' : ''}`,
+    description,
     severity,
     confidence,
     category: 'military',

@@ -1,7 +1,9 @@
 export * from './Panel';
 export * from './VirtualList';
-export * from './Map';
+export { MapComponent } from './Map';
 export * from './MapPopup';
+export { DeckGLMap } from './DeckGLMap';
+export { MapContainer, type MapView, type TimeRange, type MapContainerState } from './MapContainer';
 export * from './NewsPanel';
 export * from './MarketPanel';
 export * from './PredictionPanel';
@@ -21,6 +23,4 @@ export * from './StrategicRiskPanel';
 export * from './IntelligenceGapBadge';
 export * from './TechEventsPanel';
 export * from './ServiceStatusPanel';
-export * from './TechHubsPanel';
-export * from './TechReadinessPanel';
-export * from './GeoHubsPanel';
+export * from './InsightsPanel';

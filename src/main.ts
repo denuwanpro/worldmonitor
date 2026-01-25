@@ -1,4 +1,5 @@
 import './styles/main.css';
+import 'maplibre-gl/dist/maplibre-gl.css';
 import { inject } from '@vercel/analytics';
 import { App } from './App';
 import { debugInjectTestEvents, debugGetCells, getCellCount } from '@/services/geo-convergence';
