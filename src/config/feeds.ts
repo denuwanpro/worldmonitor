@@ -230,8 +230,8 @@ const FULL_FEEDS: Record<string, Feed[]> = {
   middleeast: [
     { name: 'BBC Middle East', url: rss('https://feeds.bbci.co.uk/news/world/middle_east/rss.xml') },
     { name: 'Al Jazeera', url: rss('https://www.aljazeera.com/xml/rss/all.xml') },
-    { name: 'Al Arabiya', url: railwayRss('https://english.alarabiya.net/.mrss/en/News/middle-east.xml') },
-    { name: 'Arab News', url: railwayRss('https://www.arabnews.com/cat/1/rss.xml') },
+    { name: 'Al Arabiya', url: railwayRss('https://english.alarabiya.net/feed/rss2/en.xml') },
+    { name: 'Arab News', url: railwayRss('https://www.arabnews.com/cat/2/rss.xml') },
     { name: 'Times of Israel', url: railwayRss('https://www.timesofisrael.com/feed/') },
     { name: 'Guardian ME', url: rss('https://www.theguardian.com/world/middleeast/rss') },
     { name: 'CNN World', url: rss('http://rss.cnn.com/rss/cnn_world.rss') },
