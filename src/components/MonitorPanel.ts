@@ -109,7 +109,12 @@ export class MonitorPanel extends Panel {
       this.monitors.forEach((monitor) => {
         // Search both title and description for better coverage
         const searchText = `${item.title} ${(item as unknown as {description?: string}).description || ''}`.toLowerCase();
-        const matched = monitor.keywords.some((kw) => searchText.includes(kw));
+        const matched = monitor.keywords.some((kw) => {
+          // Use word boundary matching to avoid false positives like "ai" in "train"
+          const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const regex = new RegExp(`\\b${escaped}\\b`, 'i');
+          return regex.test(searchText);
+        });
         if (matched) {
           matchedItems.push({ ...item, monitorColor: monitor.color });
         }
