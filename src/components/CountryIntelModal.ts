@@ -133,7 +133,7 @@ export class CountryIntelModal {
       <span class="country-flag">${flag}</span>
       <span class="country-name">${escapeHtml(country)}</span>
       ${score ? this.levelBadge(score.level) : ''}
-      <button class="country-intel-share-btn" title="Share story">⬡</button>
+      <button class="country-intel-share-btn" title="Share story"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg></button>
     `;
     this.headerEl.querySelector('.country-intel-share-btn')?.addEventListener('click', () => {
       if (this.onShareStory && this.currentCode && this.currentName) {

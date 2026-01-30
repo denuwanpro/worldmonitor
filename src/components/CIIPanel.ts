@@ -71,7 +71,7 @@ export class CIIPanel extends Panel {
           <span class="cii-name">${escapeHtml(country.name)}</span>
           <span class="cii-score">${country.score}</span>
           ${trend}
-          <button class="cii-share-btn" data-code="${escapeHtml(country.code)}" data-name="${escapeHtml(country.name)}" title="Share story">⬡</button>
+          <button class="cii-share-btn" data-code="${escapeHtml(country.code)}" data-name="${escapeHtml(country.name)}" title="Share story"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg></button>
         </div>
         <div class="cii-bar-container">
           <div class="cii-bar" style="width: ${barWidth}%; background: ${color};"></div>
