@@ -999,14 +999,37 @@ setInterval(() => {
   }
 }, 60 * 1000);
 
+// CORS origin allowlist — only our domains can use this relay
+const ALLOWED_ORIGINS = [
+  'https://worldmonitor.app',
+  'https://tech.worldmonitor.app',
+  'http://localhost:5173',   // Vite dev
+  'http://localhost:5174',   // Vite dev alt port
+  'http://localhost:4173',   // Vite preview
+  'https://localhost',       // Tauri desktop
+  'tauri://localhost',       // Tauri iOS/macOS
+];
+
+function getCorsOrigin(req) {
+  const origin = req.headers.origin || '';
+  if (ALLOWED_ORIGINS.includes(origin)) return origin;
+  // Allow Vercel preview deployments
+  if (origin.endsWith('.vercel.app')) return origin;
+  return '';
+}
+
 const server = http.createServer(async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const corsOrigin = getCorsOrigin(req);
+  if (corsOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', corsOrigin);
+    res.setHeader('Vary', 'Origin');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
-    res.writeHead(204);
+    res.writeHead(corsOrigin ? 204 : 403);
     return res.end();
   }
 
