@@ -143,6 +143,14 @@ export const SUPPRESSED_TRENDING_TERMS = new Set<string>([
   'july', 'august', 'september', 'october', 'november', 'december',
   // Company name fragments (too generic standalone)
   'goldman', 'sachs', 'off',
+  // Basic English stopwords (pronouns, prepositions, adverbs)
+  'here', 'there', 'where', 'when', 'what', 'which', 'who', 'whom',
+  'this', 'that', 'these', 'those', 'been', 'being', 'have', 'has',
+  'had', 'having', 'does', 'done', 'doing', 'would', 'could', 'should',
+  'will', 'shall', 'might', 'must', 'also', 'more', 'most', 'some',
+  'other', 'only', 'very', 'after', 'with', 'from', 'they', 'them',
+  'their', 'then', 'now', 'how', 'all', 'each', 'every',
+  'both', 'few', 'own', 'same', 'such', 'too', 'any', 'well',
 ]);
 
 
