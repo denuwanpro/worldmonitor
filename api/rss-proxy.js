@@ -198,6 +198,7 @@ const ALLOWED_DOMAINS = [
   'www.bangkokpost.com',
   'vnexpress.net',
   'www.abc.net.au',
+  'islandtimes.org',
   'www.brasilparalelo.com.br',
   // Additional
   'news.ycombinator.com',
