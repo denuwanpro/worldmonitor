@@ -1,18 +1,20 @@
 // api/custom-news.js
 export const config = { runtime: 'edge' };
 
-// 100% AI News පමණක් ගෙනෙන ලින්ක් ටික 
+// 100% මුළු AI ලෝකෙම කවර් වෙන ලින්ක් ටික (Image, Video, Voice, OpenSource & LLMs)
 const TARGET_FEEDS = [
-  // Google News (AI ගැන ලෝකේ ඕනෙම තැනක යන අලුත්ම නිවුස්)
-  'https://news.google.com/rss/search?q=(OpenAI+OR+Anthropic+OR+Google+AI+OR+ChatGPT+OR+Claude+OR+"large+language+model")+when:1d&hl=en-US&gl=US',
+  // 1. ප්‍රධාන LLM සහ සමාගම් (OpenAI, ChatGPT, Gemini, Claude ආදිය)
+  'https://news.google.com/rss/search?q=(OpenAI+OR+Anthropic+OR+Gemini+OR+ChatGPT+OR+Claude)+when:1d&hl=en-US&gl=US',
   
-  // TechCrunch අඩවියේ AI කොටස පමණක්
+  // 2. Open Source සහ Hugging Face (Llama, Mistral වගේ ඩිවලොපර්ස්ලගේ අලුත්ම දේවල්)
+  'https://news.google.com/rss/search?q=("Hugging+Face"+OR+"open-source+AI"+OR+Llama+OR+Mistral+OR+"open+weights")+when:1d&hl=en-US&gl=US',
+  
+  // 3. Image, Video සහ Voice Models (Midjourney, Sora, AI Video වගේ ක්‍රියේටිව් දේවල්)
+  'https://news.google.com/rss/search?q=(Midjourney+OR+"OpenAI+Sora"+OR+RunwayML+OR+ElevenLabs+OR+"AI+video"+OR+"AI+image+generator"+OR+"AI+voice")+when:1d&hl=en-US&gl=US',
+  
+  // 4. ලෝකේ ප්‍රධාන Tech අඩවි වල AI කොටස් පමණක් (විශ්වාසදායකම පුවත්)
   'https://techcrunch.com/category/artificial-intelligence/feed/',
-  
-  // The Verge අඩවියේ AI කොටස පමණක්
   'https://www.theverge.com/rss/ai-artificial-intelligence/index.xml',
-  
-  // VentureBeat අඩවියේ AI කොටස පමණක්
   'https://venturebeat.com/category/ai/feed/'
 ];
 
@@ -67,14 +69,30 @@ export default async function handler(req) {
       });
     });
 
-    // අලුත්ම නිවුස් උඩට එන විදිහට වෙලාව අනුව Sort කිරීම
-    allArticles.sort((a, b) => b.date - a.date);
+    // 🛑 අලුත් කොටස: Duplicates (එකම නිවුස්) අයින් කිරීම 🛑
+    let uniqueArticles = [];
+    let seenLinks = new Set();
+    let seenTitles = new Set();
 
-    // අලුත්ම නිවුස් 50 විතරක් N8N එකට යැවීම
+    allArticles.forEach(article => {
+      // ටයිට්ල් එකේ මුල් වචන 4 අරගෙන බලනවා ඒක කලින් ආවද කියලා
+      let shortTitle = article.title.toLowerCase().split(' ').slice(0, 4).join(' ');
+      
+      if (!seenLinks.has(article.link) && !seenTitles.has(shortTitle)) {
+        seenLinks.add(article.link);
+        seenTitles.add(shortTitle);
+        uniqueArticles.push(article);
+      }
+    });
+
+    // අලුත්ම නිවුස් උඩට එන විදිහට වෙලාව අනුව Sort කිරීම
+    uniqueArticles.sort((a, b) => b.date - a.date);
+
+    // අලුත්ම, පිරිසිදුම නිවුස් 50 විතරක් N8N එකට යැවීම
     return new Response(JSON.stringify({ 
       success: true, 
-      total: allArticles.length,
-      articles: allArticles.slice(0, 50) 
+      total: uniqueArticles.length,
+      articles: uniqueArticles.slice(0, 50) 
     }), { status: 200, headers });
 
   } catch (error) {
