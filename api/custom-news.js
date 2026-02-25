@@ -1,13 +1,19 @@
 // api/custom-news.js
 export const config = { runtime: 'edge' };
 
-// ඔයාට ඕනේ කරන හොඳම Tech/AI News ලින්ක් ටික (feeds.ts එකෙන් ගත්ත)
+// 100% AI News පමණක් ගෙනෙන ලින්ක් ටික 
 const TARGET_FEEDS = [
-  'https://techcrunch.com/feed/',
+  // Google News (AI ගැන ලෝකේ ඕනෙම තැනක යන අලුත්ම නිවුස්)
+  'https://news.google.com/rss/search?q=(OpenAI+OR+Anthropic+OR+Google+AI+OR+ChatGPT+OR+Claude+OR+"large+language+model")+when:1d&hl=en-US&gl=US',
+  
+  // TechCrunch අඩවියේ AI කොටස පමණක්
+  'https://techcrunch.com/category/artificial-intelligence/feed/',
+  
+  // The Verge අඩවියේ AI කොටස පමණක්
   'https://www.theverge.com/rss/ai-artificial-intelligence/index.xml',
-  'https://venturebeat.com/category/ai/feed/',
-  'https://hnrss.org/frontpage', // HackerNews
-  'https://news.google.com/rss/search?q=(OpenAI+OR+AI+OR+ChatGPT)+when:1d&hl=en-US&gl=US'
+  
+  // VentureBeat අඩවියේ AI කොටස පමණක්
+  'https://venturebeat.com/category/ai/feed/'
 ];
 
 export default async function handler(req) {
@@ -53,7 +59,7 @@ export default async function handler(req) {
         if (titleMatch && linkMatch) {
           allArticles.push({
             source_url: url,
-            title: titleMatch[1].replace(/&amp;/g, '&').replace(/&#8217;/g, "'"),
+            title: titleMatch[1].replace(/&amp;/g, '&').replace(/&#8217;/g, "'").replace(/&quot;/g, '"'),
             link: linkMatch[1],
             date: pubDateMatch ? new Date(pubDateMatch[1]).getTime() : Date.now()
           });
@@ -64,7 +70,7 @@ export default async function handler(req) {
     // අලුත්ම නිවුස් උඩට එන විදිහට වෙලාව අනුව Sort කිරීම
     allArticles.sort((a, b) => b.date - a.date);
 
-    // අලුත්ම නිවුස් 30 විතරක් N8N එකට යැවීම
+    // අලුත්ම නිවුස් 50 විතරක් N8N එකට යැවීම
     return new Response(JSON.stringify({ 
       success: true, 
       total: allArticles.length,
