@@ -68,7 +68,7 @@ export default async function handler(req) {
     return new Response(JSON.stringify({ 
       success: true, 
       total: allArticles.length,
-      articles: allArticles.slice(0, 30) 
+      articles: allArticles.slice(0, 50) 
     }), { status: 200, headers });
 
   } catch (error) {
